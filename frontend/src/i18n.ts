@@ -1,7 +1,7 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import simplified from "./locales/zh-Hans.json";
 export type Locale = "zh-Hant" | "zh-Hans";
 export type LocalePreference = Locale | "auto";
-let sessionPreference: LocalePreference | undefined;
 
 // Browsers expose language preferences, not the OS language directly. Explicit
 // script tags take precedence over regions; skip non-Chinese preferences.
@@ -16,13 +16,8 @@ export function systemLocale(languages: readonly string[]): Locale {
   return "zh-Hant";
 }
 export function localePreference(): LocalePreference {
-  if (sessionPreference !== undefined) return sessionPreference;
-  try {
-    const value = localStorage.getItem("ownsei:locale");
-    return value === "zh-Hans" || value === "zh-Hant" ? value : "auto";
-  } catch {
-    return "auto";
-  }
+  const value = readPreference("ownsei:locale");
+  return value === "zh-Hans" || value === "zh-Hant" ? value : "auto";
 }
 export function locale(): Locale {
   const preference = localePreference();
@@ -35,12 +30,7 @@ export function t(text: string): string {
   return locale() === "zh-Hans" ? (simplified as Record<string, string>)[text] ?? text : text;
 }
 export function setLocale(value: LocalePreference) {
-  try {
-    localStorage.setItem("ownsei:locale", value);
-    sessionPreference = undefined;
-  } catch {
-    sessionPreference = value;
-  }
+  writePreference("ownsei:locale", value);
   document.documentElement.lang = locale() === "zh-Hans" ? "zh-CN" : "zh-TW";
   window.dispatchEvent(new Event("ownsei:preferences"));
 }

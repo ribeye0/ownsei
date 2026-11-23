@@ -8,6 +8,7 @@ import uvicorn
 from uvicorn.config import LOGGING_CONFIG, STARTUP_FAILURE
 
 from onsei.util import ROOT
+from onsei.user_paths import config_dir
 
 
 LOGO = r"""
@@ -47,6 +48,7 @@ def run_server(host: str, port: int, verbose: bool):
 
     print(
         f"{LOGO}\n\nOwnsei {version('ownsei')}  |  日語音聲字幕工具\n"
+        f"使用者設定  {config_dir()}\n"
         f"專案目錄  {ROOT / 'workspace'}\n正在啟動後端…",
         flush=True,
     )

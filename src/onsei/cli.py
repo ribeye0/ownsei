@@ -14,6 +14,14 @@ app.add_typer(models, name="models")
 
 
 @app.command()
+def import_user_data(old_installation: Path = typer.Argument(..., exists=True, file_okay=False)):
+    """Copy legacy global settings and models into this user's Ownsei directory."""
+    from onsei.migrate_user_data import import_user_data as migrate
+
+    typer.echo(json.dumps(migrate(old_installation), ensure_ascii=False, indent=2))
+
+
+@app.command()
 def doctor(strict: bool = False, as_json: bool = typer.Option(False, "--json"), runtime_check: bool = False):
     from onsei.environment import inspect_environment
 

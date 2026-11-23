@@ -1,13 +1,11 @@
+import { preferencesFixture } from "./preferencesFixture.mjs";
 import assert from "node:assert/strict";
 import {readFileSync,readdirSync} from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 const dictionary=JSON.parse(readFileSync(new URL('../src/locales/zh-Hans.json',import.meta.url),'utf8'));
-const source=readFileSync(new URL('../src/i18n.ts',import.meta.url),'utf8').replace('import simplified from "./locales/zh-Hans.json";',`const simplified=${JSON.stringify(dictionary)};`);
-const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
-const {t,locale,setLocale,localePreference,systemLocale}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const saved=new Map();
-globalThis.localStorage={getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+const fixture = await preferencesFixture("i18n");
+const {t,locale,setLocale,localePreference,systemLocale}=fixture.client;
 let browserLanguages = ['en-US'];
 Object.defineProperty(globalThis, 'navigator', {configurable:true,value:{get languages(){return browserLanguages;},get language(){return browserLanguages[0] || 'en-US';}}});
 globalThis.document={documentElement:{lang:''}};
@@ -17,7 +15,7 @@ test('UI language is independent of translation settings and never converts unkn
   assert.equal(locale(),'zh-Hant');assert.equal(t('批量處理'),'批量處理');
   setLocale('zh-Hans');assert.equal(t('批量處理'),'批量处理');assert.equal(document.documentElement.lang,'zh-CN');
   assert.equal(t('作品名：歡迎回來／こんにちは'),'作品名：歡迎回來／こんにちは');
-  assert.equal(saved.has('target_language'),false);
+  assert.equal('target_language' in fixture.disk(),false);
   setLocale('zh-Hant');
 });
 
@@ -54,23 +52,25 @@ test('system language detection respects Chinese scripts, regions and preference
   assert.equal(systemLocale([]),'zh-Hant');
 });
 
-test('first visit follows system; saved manual choices survive and auto can be restored',()=>{
-  saved.clear();browserLanguages=['zh-CN'];
+test('first visit follows system; saved manual choices survive and auto can be restored',async ()=>{
+  await fixture.reset();browserLanguages=['zh-CN'];
   assert.equal(localePreference(),'auto');assert.equal(locale(),'zh-Hans');
   setLocale('zh-Hant');assert.equal(localePreference(),'zh-Hant');assert.equal(locale(),'zh-Hant');
   browserLanguages=['zh-TW'];setLocale('zh-Hans');assert.equal(locale(),'zh-Hans');
   setLocale('auto');assert.equal(localePreference(),'auto');assert.equal(locale(),'zh-Hant');
   browserLanguages=['zh-CN'];assert.equal(locale(),'zh-Hans');
-  saved.set('ownsei:locale','invalid');assert.equal(localePreference(),'auto');
+  await fixture.reset({locale:'invalid'});assert.equal(localePreference(),'auto');
   assert.equal(t('匯出字幕'),'导出字幕');assert.equal(t('較敏感（預設）'),'较敏感（默认）');
   setLocale('zh-Hant');browserLanguages=['en-US'];
 });
 
-test('blocked browser storage still permits language switching for this session',()=>{
+test('blocked browser storage still permits language switching for this session',async ()=>{
+  await fixture.reset();
   const storage=globalThis.localStorage;
   globalThis.localStorage={getItem(){throw Error('blocked');},setItem(){throw Error('blocked');}};
   browserLanguages=['zh-CN'];
   try {
+    await fixture.settings.loadInterfacePreferences();
     assert.equal(locale(),'zh-Hans');setLocale('zh-Hant');assert.equal(locale(),'zh-Hant');
     setLocale('auto');assert.equal(locale(),'zh-Hans');
   } finally {globalThis.localStorage=storage;browserLanguages=['en-US'];setLocale('zh-Hant');}

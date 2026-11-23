@@ -9,8 +9,8 @@ import threading
 import time
 from pathlib import Path
 from filelock import FileLock
-from huggingface_hub import snapshot_download
 from onsei.util import ROOT, STATE, atomic_json, file_hash, gpu_lock_path
+from onsei.user_paths import locks_dir, models_dir
 from onsei.diskspace import GIB, RESERVE, capacity_message, existing_directory, require_space
 
 from onsei.catalog import (
@@ -42,7 +42,7 @@ def required_files(name):
 def model_dir(name: str) -> Path:
     if name not in REGISTRY:
         raise ValueError(f"Unknown model: {name}")
-    return ROOT / "models" / name
+    return models_dir() / name
 
 
 def venv_python(directory: Path) -> Path:
@@ -108,9 +108,9 @@ def preparation_error(error):
     no_space |= any(term in text.lower() for term in ("no space left", "os error 28", "enospc"))
     try:
         if no_space:
-            return capacity_message(ROOT)
+            return capacity_message(Path(getattr(error, "filename", None) or models_dir()))
         if isinstance(error, subprocess.CalledProcessError) or "writer channel closed" in text.lower():
-            paths = [ROOT, *[p for p, _ in runtime_space_requirements("vad")]]
+            paths = [models_dir(), *[p for p, _ in runtime_space_requirements("vad")]]
             for path in paths:
                 if shutil.disk_usage(existing_directory(path)).free < RESERVE:
                     return capacity_message(path)
@@ -138,7 +138,7 @@ def setup_runtime(kind: str, progress=None) -> None:
         raise ValueError("共用執行環境版本不同；請先移除新版環境連結，再重新準備模型")
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "runtime_wait", message=f"準備 {kind} 執行環境；等待目前的 GPU 任務完成")
-    with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(STATE)):
+    with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(locks_dir())):
         if runtime_current(kind):
             return
         require_space(runtime_space_requirements(kind))
@@ -239,6 +239,10 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
         files_done=0,
         files_total=0,
     )
+    # The hub reads the Xet cache location when it is first imported.
+    os.environ.setdefault("HF_XET_CACHE", str(models_dir() / ".cache/xet"))
+    from huggingface_hub import snapshot_download
+
     reporter = progress_bar(progress) if progress is not None else None
     kwargs = {"tqdm_class": reporter} if reporter else {}
     try:
@@ -247,7 +251,7 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
             revision=revision,
             local_dir=directory,
             allow_patterns=patterns,
-            cache_dir=ROOT / ".tools/hf-cache",
+            cache_dir=models_dir() / ".cache/hub",
             max_workers=4,
             force_download=force,
             **kwargs,
@@ -324,7 +328,7 @@ def prepare(name: str, progress=None) -> Path:
         raise ValueError(f"Unknown model: {name}")
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "waiting", message="等待其他模型準備任務完成")
-    with FileLock(STATE / "model-operation.lock"):
+    with FileLock(locks_dir() / "model-operation.lock"):
         check_prepare_space([name])
         return _prepare(name, progress)
 

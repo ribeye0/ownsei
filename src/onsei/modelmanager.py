@@ -13,6 +13,7 @@ import time
 from contextlib import closing
 from filelock import FileLock, Timeout
 from onsei import models
+from onsei.user_paths import locks_dir, models_dir
 from onsei.environment import llama_binary
 from onsei.processes import alive, process_identity, process_owned, spawn_options, signal_group
 from onsei.project_paths import project_location
@@ -114,7 +115,7 @@ def catalog():
                 "dependencies": [],
                 "path": str(location),
                 "bytes": bytes_on_disk(location),
-                "source_bytes": bytes_on_disk(ROOT / "models/.sources" / name),
+                "source_bytes": bytes_on_disk(models_dir() / ".sources" / name),
                 "job": job,
             }
         )
@@ -164,7 +165,7 @@ def start_download(names):
                 os.environ,
                 ONSEI_ROOT=str(ROOT),
                 PYTHONPATH=str(ROOT / "src"),
-                HF_XET_CACHE=str(ROOT / ".tools/hf-xet"),
+                HF_XET_CACHE=str(models_dir() / ".cache/xet"),
             )
             try:
                 with (directory / (identity + ".log")).open("w") as log:
@@ -243,9 +244,9 @@ def delete_model(name):
     paths(name)
     try:
         with (
-            FileLock(STATE / "model-operation.lock", timeout=0),
+            FileLock(locks_dir() / "model-operation.lock", timeout=0),
             FileLock(STATE / "model-submit.lock"),
-            FileLock(gpu_lock_path(STATE), timeout=0),
+            FileLock(gpu_lock_path(locks_dir()), timeout=0),
         ):
             job = json.loads(paths(name)[1].read_text()) if paths(name)[1].exists() else None
             if (
@@ -256,7 +257,7 @@ def delete_model(name):
             ):
                 raise ConflictError("已有待處理或執行中任務，請完成後再刪除模型")
             removed = 0
-            targets = (models.model_dir(name), ROOT / "models/.sources" / name)
+            targets = (models.model_dir(name), models_dir() / ".sources" / name)
             for path in targets:
                 if path.is_symlink():
                     raise ValueError("模型目錄是符號連結，拒絕刪除")

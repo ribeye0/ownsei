@@ -1,3 +1,4 @@
+import { readPreference, savePreference } from "./interfacePreferences";
 export type ExportPreferences = {
   languages: string[];
   formats: string[];
@@ -26,11 +27,11 @@ export function normalizeExportPreferences(value: unknown): ExportPreferences {
 }
 export function loadExportPreferences(): ExportPreferences {
   try {
-    return normalizeExportPreferences(JSON.parse(localStorage.getItem(key) || "null"));
+    return normalizeExportPreferences(JSON.parse(readPreference(key) || "null"));
   } catch {
     return normalizeExportPreferences(null);
   }
 }
-export function saveExportPreferences(value: ExportPreferences): void {
-  localStorage.setItem(key, JSON.stringify(normalizeExportPreferences(value)));
+export function saveExportPreferences(value: ExportPreferences): Promise<void> {
+  return savePreference(key, JSON.stringify(normalizeExportPreferences(value)));
 }

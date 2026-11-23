@@ -56,7 +56,7 @@ try {
         'tests/test_api.py', 'tests/test_project_management.py', 'tests/test_delivery_files.py',
         'tests/test_versions.py', 'tests/test_translation_contract.py', 'tests/test_translation_retry.py',
         'tests/test_translation_names.py', 'tests/test_translation_document.py', 'tests/test_webvtt.py',
-        'tests/test_audio.py', 'tests/test_launcher.py', 'tests/test_release_packages.py',
+        'tests/test_audio.py', 'tests/test_launcher.py', 'tests/test_user_paths.py', 'tests/test_release_packages.py',
         'tests/test_model_management.py::test_running_worker_cannot_overwrite_cancelled_or_replaced_job',
         'tests/test_model_management.py::test_progress_writer_excludes_catalog_reader_during_atomic_replacement',
         'tests/test_model_management.py::test_catalog_does_not_report_ready_before_preparation_finishes'

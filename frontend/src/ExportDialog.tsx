@@ -68,14 +68,14 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
             setBusy(false);
         }
     }
-    function saveDefaults() {
+    async function saveDefaults() {
         setError("");
         setSaved(false);
         try {
-            saveExportPreferences({ languages, formats, chinese, languageTag, destination, overwrite });
+            await saveExportPreferences({ languages, formats, chinese, languageTag, destination, overwrite });
             setSaved(true);
-        } catch {
-            setError(ui("無法保存匯出預設，請確認瀏覽器允許儲存網站資料。"));
+        } catch (error) {
+            setError(String(error));
         }
     }
     const eligible = tracks.filter(t => sources[t.id]?.versions.length);

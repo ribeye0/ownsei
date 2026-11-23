@@ -1,3 +1,4 @@
+import { readPreference, writePreference, loadInterfacePreferences } from "./interfacePreferences";
 import { TranscriptList } from "./TranscriptList";
 import { Sidebar } from "./Sidebar";
 import { modelLabels } from "./labels";
@@ -119,7 +120,7 @@ function App() {
     [reportCopied, setReportCopied] = useState(false);
   const transcriptList = useRef<HTMLElement>(null);
   const [followPlayback, setFollowPlayback] = useState(
-    () => localStorage.getItem("ownsei:follow-playback") !== "false",
+    () => readPreference("ownsei:follow-playback") !== "false",
   );
   const [draft, setDraft] = useState<Cue | null>(null),
     [notes, setNotes] = useState(""),
@@ -161,6 +162,11 @@ function App() {
       ...details?.settings.translation_styles,
     },
   };
+  useEffect(() => {
+    const report = (event: Event) => setError((event as CustomEvent<string>).detail);
+    window.addEventListener("ownsei:settings-error", report);
+    return () => window.removeEventListener("ownsei:settings-error", report);
+  }, []);
   function openStyle() {
     styleReturn.current = dialog === "process" ? "process" : "";
     setPreferences(projectPreferences);
@@ -376,7 +382,7 @@ function App() {
       .catch((e) => setError(String(e)));
   }, []);
   useEffect(() => {
-    localStorage.setItem("ownsei:follow-playback", String(followPlayback));
+    writePreference("ownsei:follow-playback", String(followPlayback));
   }, [followPlayback]);
   useEffect(() => {
     setNow(0);
@@ -441,7 +447,6 @@ function App() {
         const model = translationVersions.find((v) => v.id === id)?.model;
         if (model && model !== "legacy") {
           setTranslation(model);
-          localStorage.setItem("onsei:translation", model);
         }
       }
       setActive("");
@@ -1557,8 +1562,9 @@ function App() {
     </div>
   );
 }
-createRoot(document.getElementById("root")!).render(
+const root = createRoot(document.getElementById("root")!);
+loadInterfacePreferences().then(() => root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
-);
+)).catch(error => root.render(<p role="alert">{String(error)} <button onClick={() => location.reload()}>{ui("重新載入")}</button></p>));

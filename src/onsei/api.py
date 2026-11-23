@@ -236,7 +236,7 @@ def preference_defaults():
 
 @app.get("/api/preferences/global")
 def global_preferences():
-    return load_global(ROOT / "workspace/global-preferences.json")
+    return load_global()
 
 
 class GlobalPreferencesRequest(BaseModel):
@@ -246,7 +246,7 @@ class GlobalPreferencesRequest(BaseModel):
 
 @app.put("/api/preferences/global")
 def update_global_preferences(body: GlobalPreferencesRequest):
-    return save_global(body.glossary_entries, body.revision, ROOT / "workspace/global-preferences.json")
+    return save_global(body.glossary_entries, body.revision)
 
 
 class NativePickerRequest(BaseModel):
@@ -599,7 +599,7 @@ def new_job(p: str, body: JobRequest):
         options["translation_settings"] = (
             pin_translation_settings(
                 {**s.settings(), **updated_preferences(s.settings(), overrides)},
-                load_global(ROOT / "workspace/global-preferences.json")["glossary_entries"],
+                load_global()["glossary_entries"],
             )
             if body.action in ("run", "translate")
             else translation_preferences(s.settings())

@@ -94,7 +94,7 @@ def test_runner_uses_shared_gpu_lock_before_entering_pipeline(tmp_path, monkeypa
     original.mkdir()
     state.mkdir()
     (state / "gpu.lock").symlink_to(original / "gpu.lock")
-    monkeypatch.setattr(runner, "STATE", state)
+    monkeypatch.setattr(runner, "locks_dir", lambda: state)
     store = Store.create(tmp_path / "project", "shared lock")
     job = store.new_job("transcribe", {})
     run_job(store, job["id"])

@@ -1,8 +1,9 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import {useEffect,useState} from "react";
 import {locale,localePreference,setLocale,type LocalePreference} from "./i18n";
 export function usePreferences() {
   const [language,updateLanguage]=useState(locale), [languagePreference,updatePreference]=useState(localePreference);
-  const [theme,updateTheme]=useState(()=>localStorage.getItem("ownsei:theme")==="mocha"?"mocha":"classic");
+  const [theme,updateTheme]=useState(()=>readPreference("ownsei:theme")==="mocha"?"mocha":"classic");
   useEffect(()=>{
     document.documentElement.lang=language==="zh-Hans"?"zh-CN":"zh-TW";
     document.documentElement.dataset.theme=theme;
@@ -11,17 +12,14 @@ export function usePreferences() {
   },[language,theme]);
   useEffect(()=>{
     const update=()=>{updateLanguage(locale());updatePreference(localePreference());};
-    const storage=(event:StorageEvent)=>{if(event.key===null||event.key==="ownsei:locale")update();};
     window.addEventListener("ownsei:preferences",update);
     window.addEventListener("languagechange",update);
-    window.addEventListener("storage",storage);
     return()=>{
       window.removeEventListener("ownsei:preferences",update);
       window.removeEventListener("languagechange",update);
-      window.removeEventListener("storage",storage);
     };
   },[]);
   return {language,languagePreference,theme,setLanguage:(value:LocalePreference)=>{
     setLocale(value);updateLanguage(locale());updatePreference(localePreference());
-  },setTheme:(value:string)=>{localStorage.setItem("ownsei:theme",value);updateTheme(value);}};
+  },setTheme:(value:string)=>{writePreference("ownsei:theme",value);updateTheme(value);}};
 }

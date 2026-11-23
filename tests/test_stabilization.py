@@ -307,8 +307,10 @@ def test_waiting_runner_cancel_confirms_exit_and_keeps_gpu_lock(result, tmp_path
     store, track, _ = result
     root = tmp_path / "runtime"
     monkeypatch.setenv("ONSEI_ROOT", str(root))
-    locks = root / ".runtime-envs"
-    locks.mkdir(parents=True)
+    from onsei.user_paths import locks_dir
+
+    locks = locks_dir()
+    locks.mkdir(parents=True, exist_ok=True)
     job = store.new_job("transcribe", {"track_ids": [track.id]})
     processes = []
     spawn = runner.subprocess.Popen

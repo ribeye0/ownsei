@@ -61,7 +61,16 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 
 首次啟動會安裝 Python 環境並開啟瀏覽器。在「模型管理與環境檢查」按 **準備基本組合**，即可下載 FireRedVAD、Haas JA F16 與 NativeLong 9B。首次安裝與下載建議預留 12–15 GiB。Linux 另需 curl、FFmpeg 與 ffprobe。
 
-升級時先關閉舊版，將 `workspace/`（專案）與 `models/`（模型）複製到新版目錄。專案依路徑引用音檔，原始音檔請留在原處。
+模型與全局設定由同一個系統使用者的各版本共用。
+
+| 平台 | 使用者目錄 |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/ownsei/`，未設定時為 `~/.config/ownsei/` |
+| Windows | `%APPDATA%\ownsei\` |
+
+模型在使用者目錄的 `models/`，全局術語與介面偏好分別存於 `global-preferences.json` 與 `interface.json`。專案、專案術語與字幕仍在安裝目錄的 `workspace/`。
+
+從 0.2.2 或更早版本升級時，先關閉舊版，再從新版安裝目錄執行 `.venv/bin/ownsei import-user-data "/舊版安裝目錄"`（Windows PowerShell 使用 `.\.venv\Scripts\ownsei.exe import-user-data "D:\舊版安裝目錄"`）。這會複製舊模型與全局術語，略過目的地已有的項目。要沿用專案可再複製 `workspace/`；原始音檔請留在原處。瀏覽器偏好會在首次以原瀏覽器及連接埠開啟新版時匯入。
 
 ## 開發
 

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from filelock import FileLock
 
 from onsei import models, modelmanager as manager
+from onsei.user_paths import locks_dir, models_dir
 from onsei.storage import ConflictError
 from onsei.util import atomic_json, file_hash
 
@@ -121,12 +122,13 @@ def test_download_reporter_closes_before_verification_even_when_download_fails(l
     held = []
 
     def snapshot(**kwargs):
+        assert kwargs["cache_dir"] == models_dir() / ".cache/hub"
         progress = kwargs["tqdm_class"](total=1000, unit="B", desc="Reconstructing")
         progress.update(100)
         held.append(progress)
         raise RuntimeError("connection lost")
 
-    monkeypatch.setattr(models, "snapshot_download", snapshot)
+    monkeypatch.setattr("huggingface_hub.snapshot_download", snapshot)
     with pytest.raises(RuntimeError, match="connection lost"):
         models.download_snapshot("repo", "revision", local, ["model.gguf"], events.append)
     assert events[-1]["bytes_done"] == 100
@@ -275,7 +277,7 @@ def test_dead_worker_marked_interrupted_and_invalid_identity_rejected(local):
 
 def test_delete_removes_only_model_and_its_source_and_preserves_runtime_and_works(local):
     path = install_receipt("firered-vad")
-    source = local / "models/.sources/firered-vad"
+    source = models_dir() / ".sources/firered-vad"
     source.mkdir(parents=True)
     (source / "model.bin").write_bytes(b"raw")
     work = local / "workspace/data"
@@ -294,7 +296,7 @@ def test_delete_removes_only_model_and_its_source_and_preserves_runtime_and_work
 @pytest.mark.parametrize("lock", ["gpu.lock", "model-operation.lock"])
 def test_delete_refuses_busy_and_symlink_paths(local, lock):
     path = install_receipt("index-translate-9b")
-    with FileLock(manager.STATE / lock):
+    with FileLock(locks_dir() / lock):
         with pytest.raises(ConflictError):
             manager.delete_model("index-translate-9b")
     assert path.exists()
@@ -379,7 +381,8 @@ def test_model_delete_respects_original_lock_through_shared_symlink(local, monke
     original = local / "original"
     original.mkdir()
     manager.STATE.mkdir(parents=True, exist_ok=True)
-    (manager.STATE / "gpu.lock").symlink_to(original / "gpu.lock")
+    locks_dir().mkdir(parents=True, exist_ok=True)
+    (locks_dir() / "gpu.lock").symlink_to(original / "gpu.lock")
     path = install_receipt("firered-vad")
     monkeypatch.setattr(manager, "tasks_pending", lambda: False)
     with FileLock(original / "gpu.lock"):

@@ -14,7 +14,7 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, method = "GET", body?: unknown,
-  options: {signal?: AbortSignal; timeoutMs?: number} = {}): Promise<T> {
+  options: {signal?: AbortSignal; timeoutMs?: number; keepalive?: boolean} = {}): Promise<T> {
   const controller = new AbortController();
   const cancel = () => controller.abort();
   options.signal?.addEventListener("abort", cancel, {once:true});
@@ -32,6 +32,7 @@ export async function api<T>(path: string, method = "GET", body?: unknown,
     const request = async () => {
       const response = await fetch("/api" + path, {
         method,
+        keepalive: options.keepalive,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,

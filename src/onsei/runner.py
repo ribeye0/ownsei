@@ -16,6 +16,7 @@ from onsei.models import ASR_MODELS, DEFAULT_ASR, DEFAULT_TRANSLATION
 from onsei.metrics import GpuMetrics
 from onsei.storage import Store
 from onsei.util import STATE, atomic_json, gpu_lock_path
+from onsei.user_paths import locks_dir
 from onsei.processes import alive, process_identity, runner_owned, spawn_options, signal_group
 from onsei.snapshots import cue_digest
 
@@ -85,7 +86,7 @@ def _run_job(store: Store, job_id: str):
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     try:
-        lock_path = gpu_lock_path(STATE)
+        lock_path = gpu_lock_path(locks_dir())
         print(f"GPU lock: {lock_path}", flush=True)
         lock = FileLock(lock_path)
         while True:

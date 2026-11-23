@@ -87,7 +87,10 @@ def inspect_environment(*, runtimes=False, engines=True):
         else:
             ok, detail = False, "Optional runtime not installed"
         add("vad", ok, detail, required=False)
-    usage = shutil.disk_usage(ROOT)
+    from onsei.diskspace import existing_directory
+    from onsei.user_paths import config_dir, models_dir
+
+    usage = shutil.disk_usage(existing_directory(models_dir()))
     add(
         "disk",
         usage.free >= 15 * 1024**3,
@@ -100,6 +103,8 @@ def inspect_environment(*, runtimes=False, engines=True):
         "gpus": inventory.get("llama", {}).get("devices", []),
         "devices": inventory,
         "root": str(ROOT),
+        "config_dir": str(config_dir()),
+        "models_dir": str(models_dir()),
         "free_bytes": usage.free,
     }
 

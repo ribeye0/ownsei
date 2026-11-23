@@ -1,3 +1,4 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { t as ui } from "./i18n";
@@ -18,7 +19,7 @@ type Inventory = Record<
 export function useExecution() {
   const [value, setValue] = useState<ExecutionOptions>(() => {
     try {
-      const stored = JSON.parse(localStorage.getItem("ownsei:vulkan:execution:v1") || "{}");
+      const stored = JSON.parse(readPreference("ownsei:vulkan:execution:v1") || "{}");
       return {
         asr_device: stored.asr_device ?? defaults.asr_device,
         llm_device: stored.llm_device ?? defaults.llm_device,
@@ -30,7 +31,7 @@ export function useExecution() {
   });
   useEffect(
     () =>
-      localStorage.setItem("ownsei:vulkan:execution:v1", JSON.stringify(value)),
+      writePreference("ownsei:vulkan:execution:v1", JSON.stringify(value)),
     [value],
   );
   return [value, setValue] as const;

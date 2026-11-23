@@ -1,3 +1,4 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import { useEffect, useState } from "react";
 import { VadControls, useVadOptions, type VadOptions } from "./VadControls";
 import "./vad-controls.css";
@@ -15,14 +16,14 @@ export function useAsrFilter() {
       return {
         enabled: false,
         min_overlap: 0.25,
-        ...JSON.parse(localStorage.getItem("ownsei:asr-filter:v1") || "{}"),
+        ...JSON.parse(readPreference("ownsei:asr-filter:v1") || "{}"),
       };
     } catch {
       return { enabled: false, min_overlap: 0.25 };
     }
   });
   useEffect(
-    () => localStorage.setItem("ownsei:asr-filter:v1", JSON.stringify(prefs)),
+    () => writePreference("ownsei:asr-filter:v1", JSON.stringify(prefs)),
     [prefs],
   );
   const value: AsrFilterOptions = { ...prefs, settings: vad.firered };

@@ -127,7 +127,9 @@ Use `--port NUMBER` to require a specific port.
 
 The UI and native inference engines are included. First setup downloads Python
 3.12 and application dependencies; Node.js is not required. Models are downloaded
-from Model management after startup. User data stays in workspace/ and models/.
+from Model management after startup. Projects stay in workspace/. Global settings
+and models/ live under {"%APPDATA%/ownsei" if platform == "windows" else "$XDG_CONFIG_HOME/ownsei (default ~/.config/ownsei)"}.
+For migration from older releases, see README.md.
 
 Haas uses speech.cpp Vulkan. Translation uses llama.cpp {backend.upper()}.
 """

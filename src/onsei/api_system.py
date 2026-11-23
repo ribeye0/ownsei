@@ -1,8 +1,15 @@
 """System and model-management HTTP routes, independent of project storage."""
 
+import json
+from typing import ClassVar
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from filelock import FileLock
+from pydantic import BaseModel, JsonValue
+
+from onsei.user_paths import config_dir
+from onsei.util import atomic_json
 
 router = APIRouter(tags=["system"])
 
@@ -72,3 +79,33 @@ def model_delete(name: str):
     from onsei.modelmanager import delete_model
 
     return delete_model(name)
+
+
+class InterfacePreferences(BaseModel):
+    keys: ClassVar[set[str]] = {
+        "locale",
+        "theme",
+        "export",
+        "execution",
+        "vad",
+        "asr_filter",
+        "follow_playback",
+        "playback_rate",
+    }
+    values: dict[str, JsonValue]
+    import_missing: bool = False
+
+
+@router.post("/api/preferences/interface")
+def interface_preferences(body: InterfacePreferences):
+    if body.values.keys() - body.keys or len(json.dumps(body.values)) > 16384:
+        raise ValueError("無效的介面設定")
+    path = config_dir() / "interface.json"
+    with FileLock(str(path) + ".lock", timeout=5):
+        current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if not isinstance(current, dict):
+            raise ValueError("介面設定檔格式無效，請檢查 interface.json")
+        merged = {**body.values, **current} if body.import_missing else {**current, **body.values}
+        if merged != current:
+            atomic_json(path, merged)
+        return merged

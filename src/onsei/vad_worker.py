@@ -10,7 +10,8 @@ from pathlib import Path
 import time
 import wave
 
-from onsei.util import ROOT as BASE, atomic_json as save
+from onsei.util import atomic_json as save
+from onsei.user_paths import models_dir
 from onsei.vad_settings import normalize_settings
 
 REVISION = "7990aaccc6b7aec1e527743bd30201f2c4a03b8c"
@@ -179,7 +180,7 @@ def detect(path, model_dir, output, config=None, limit_ms=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("audio", type=Path)
-    parser.add_argument("--model", type=Path, default=BASE / "models/firered-vad")
+    parser.add_argument("--model", type=Path, default=models_dir() / "firered-vad")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--limit-ms", type=int)

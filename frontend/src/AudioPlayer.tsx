@@ -1,3 +1,4 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import { t as ui } from "./i18n";
 import {
   useEffect,
@@ -98,7 +99,7 @@ export function AudioPlayer({
   const playing = state !== "paused";
   const [duration, setDuration] = useState(track.duration_ms / 1000);
   const [rate, setRate] = useState(() => {
-    const stored = Number(localStorage.getItem("onsei:playback-rate") || 1);
+    const stored = Number(readPreference("onsei:playback-rate") || 1);
     return playbackRates.includes(stored) ? stored : 1;
   });
   const [volume, setVolume] = useState(1),
@@ -158,7 +159,7 @@ export function AudioPlayer({
   }, [expanded]);
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = rate;
-    localStorage.setItem("onsei:playback-rate", String(rate));
+    writePreference("onsei:playback-rate", String(rate));
   }, [rate, audioRef]);
   useEffect(() => {
     if (!dock.current) return;

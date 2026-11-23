@@ -6,13 +6,16 @@ from filelock import FileLock
 
 from onsei.terminology import normalize_entries
 from onsei.translation_policy import DEFAULT_GLOSSARY
-from onsei.util import ROOT, atomic_json
+from onsei.util import atomic_json
+from onsei.user_paths import config_dir
 
-GLOBAL_PATH = ROOT / "workspace/global-preferences.json"
+
+def global_path():
+    return config_dir() / "global-preferences.json"
 
 
 def load_global(path=None):
-    path = Path(path or GLOBAL_PATH)
+    path = Path(path or global_path())
     if not path.exists():
         return {"revision": 0, "glossary_entries": normalize_entries(DEFAULT_GLOSSARY)}
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -30,7 +33,7 @@ def save_global(entries, revision, path=None):
     from onsei.storage import ConflictError
 
     entries = normalize_entries(entries)
-    path = Path(path or GLOBAL_PATH)
+    path = Path(path or global_path())
     path.parent.mkdir(parents=True, exist_ok=True)
     with FileLock(str(path) + ".lock", timeout=5):
         current = load_global(path)

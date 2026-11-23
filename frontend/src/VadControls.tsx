@@ -1,3 +1,4 @@
+import { readPreference, writePreference } from "./interfacePreferences";
 import { t as ui } from "./i18n";
 import { useEffect, useState } from "react";
 export type VadOptions = {
@@ -19,7 +20,7 @@ export const vadDefaults = (engine: string): VadOptions => ({
 export function loadVadOptions(): Record<string, VadOptions> {
   try {
     const saved = JSON.parse(
-      localStorage.getItem("ownsei:vad-options:v1") || "{}",
+      readPreference("ownsei:vad-options:v1") || "{}",
     );
     return Object.fromEntries(
       ["firered", "silero"].map((k) => [k, { ...vadDefaults(k), ...saved[k] }]),
@@ -32,7 +33,7 @@ export function useVadOptions() {
   const [options, setOptions] = useState(loadVadOptions);
   useEffect(
     () =>
-      localStorage.setItem("ownsei:vad-options:v1", JSON.stringify(options)),
+      writePreference("ownsei:vad-options:v1", JSON.stringify(options)),
     [options],
   );
   return [options, setOptions] as const;

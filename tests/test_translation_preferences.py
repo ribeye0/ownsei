@@ -42,9 +42,6 @@ def client(tmp_path, monkeypatch):
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr("onsei.modelmanager.installed", lambda _: False)
-    import onsei.global_preferences as global_settings
-
-    monkeypatch.setattr(global_settings, "GLOBAL_PATH", tmp_path / "global.json")
     s = Store.create(tmp_path / "project", "Test")
     t = Track(
         id="track",
@@ -228,7 +225,7 @@ def test_running_and_resumed_jobs_keep_global_settings_even_if_live_file_invalid
     assert job["options"]["translation_settings"]["global_glossary"] == [entry(zh="初始用詞")]
     assert second["options"]["translation_settings"]["global_glossary"] == [entry(zh="之後用詞")]
     assert store.snapshot_valid(job["options"]["input_snapshots"]["track"])
-    globals.GLOBAL_PATH.write_text("broken")
+    globals.global_path().write_text("broken")
     resumed = store.new_job("translate", job["options"])
     assert resumed["options"]["translation_settings"] == job["options"]["translation_settings"]
     assert options == original
@@ -310,7 +307,7 @@ def test_pipeline_uses_pinned_style_and_terms_and_preserves_old_results(store, m
     monkeypatch.setattr(pipeline, "Llama", Engine)
     save_global([entry(zh="初始用詞")], 0)
     job = store.new_job("translate", {"track_ids": ["track"]})
-    globals.GLOBAL_PATH.write_text("invalid-current-global-settings")
+    globals.global_path().write_text("invalid-current-global-settings")
     snapshot = job["options"]["input_snapshots"]["track"]
     outputs = process_translation(store, "track", "index-translate-9b", lambda _: None, snapshot=snapshot)
     metadata = store.run_metadata(outputs["draft"])
