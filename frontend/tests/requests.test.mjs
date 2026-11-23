@@ -6,11 +6,22 @@ import ts from "typescript";
 
 async function moduleAt(name) {
   const source = readFileSync(new URL(`../src/${name}.ts`, import.meta.url), "utf8");
-  const compiled = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+  const compiled = ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(compiled).toString("base64")}`);
 }
-const {api} = await moduleAt("api");
+const {api, ApiError} = await moduleAt("api");
 const {RequestLane} = await moduleAt("requestLane");
+
+test("API errors preserve status so polling can distinguish a missing project from a transient failure", async () => {
+  const fetch = globalThis.fetch;
+  try {
+    for (const status of [404, 410, 503]) {
+      globalThis.fetch = async () => new Response(JSON.stringify({detail:"project error"}), {status});
+      await assert.rejects(api("/projects/example/jobs"), error =>
+        error instanceof ApiError && error.status === status && error.message === "project error");
+    }
+  } finally { globalThis.fetch = fetch; }
+});
 
 test("hard deadline settles even when the transport ignores abort", async () => {
   const fetch = globalThis.fetch;

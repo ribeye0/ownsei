@@ -7,6 +7,12 @@ export type Project = {
   trashed_at?: number | null;
 };
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+  }
+}
+
 export async function api<T>(path: string, method = "GET", body?: unknown,
   options: {signal?: AbortSignal; timeoutMs?: number} = {}): Promise<T> {
   const controller = new AbortController();
@@ -33,7 +39,7 @@ export async function api<T>(path: string, method = "GET", body?: unknown,
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: response.statusText }));
         if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
-        throw Error(typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail));
+        throw new ApiError(response.status, typeof error.detail === "string" ? error.detail : JSON.stringify(error.detail));
       }
       return await response.json();
     };

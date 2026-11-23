@@ -143,6 +143,7 @@ function App() {
     searchInput = useRef<HTMLInputElement>(null),
     rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const base = `/projects/${pid}`;
+  const projectAvailable = projects.some((project) => project.id === pid);
   const [resultsLoading, setResultsLoading] = useState(false);
   const projectReads = useRef(new RequestLane());
   const projectListRequest = useRef(0);
@@ -229,7 +230,7 @@ function App() {
       setBusy(pendingActions.current > 0);
     }
   };
-  async function refreshProjects() {
+  async function refreshProjects(missingId?: string) {
     const request = ++projectListRequest.current;
     const next = await api<Project[]>("/projects");
     if (request !== projectListRequest.current) return;
@@ -239,7 +240,14 @@ function App() {
       next.map((p) => p.id),
       selectionRef.current.pid,
     );
-    if (selected !== selectionRef.current.pid) selectProject(selected, true);
+    if (selected !== selectionRef.current.pid) {
+      if (missingId && missingId === selectionRef.current.pid && originalDraft.current) {
+        setError(ui("此專案已不在目前工作區，請先複製需要保留的校對內容，再切換專案。"));
+      } else {
+        selectProject(selected, true);
+      }
+    }
+    return next;
   }
   async function deleteProject(id: string) {
     await api(`/projects/${id}`, "DELETE");
@@ -378,6 +386,7 @@ function App() {
     setFiles([]);
   }, [pid, tid]);
   useEffect(() => {
+    if (pid && !projectAvailable) return;
     if (pid) localStorage.setItem("onsei:project", pid);
     else localStorage.removeItem("onsei:project");
     setTid("");
@@ -388,7 +397,7 @@ function App() {
       if (selectionRef.current.pid === pid) setError(String(e));
     });
     return () => projectReads.current.cancel();
-  }, [pid]);
+  }, [pid, projectAvailable]);
   useEffect(() => {
     setActive("");
     setSelected([]);
@@ -401,7 +410,12 @@ function App() {
     });
     return () => resultReads.current.cancel();
   }, [pid, tid, loadedPid]);
-  useJobs(base, !!pid, {
+  useJobs(base, projectAvailable, {
+    onProjectUnavailable: async () => {
+      if (selectionRef.current.pid !== pid) return false;
+      const next = await refreshProjects(pid);
+      return selectionRef.current.pid === pid && (!next || next.some((p) => p.id === pid));
+    },
     onJobs: setJobs,
     onError: (e) => setError(String(e)),
     onResultsChanged: async () => {
