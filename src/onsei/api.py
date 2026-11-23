@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -27,6 +27,7 @@ from onsei.project_paths import project_location
 from onsei.storage import Store, ConflictError
 from onsei.snapshots import fresh_exports
 from onsei.view import track_view
+from onsei.updater import updates
 from onsei.util import ROOT
 from onsei.joblogs import read_log, stream_log
 from onsei.preferences import (
@@ -93,25 +94,76 @@ app.include_router(system_router)
 async def local_origin(request: Request, call_next):
     origin = request.headers.get("origin")
     if origin and origin != f"http://{request.headers.get('host')}":
-        from fastapi.responses import JSONResponse
-
         return JSONResponse({"detail": "Local same-origin access required"}, status_code=403)
     try:
-        return await call_next(request)
+        return await admit_update(request, call_next)
     except ConflictError as e:
-        from fastapi.responses import JSONResponse
-
         return JSONResponse({"detail": str(e)}, status_code=409)
     except (sqlite3.OperationalError, LockTimeout) as e:
-        from fastapi.responses import JSONResponse
-
         return JSONResponse(
             {"detail": f"資料或檔案正在被其他操作使用，請稍後重新載入確認：{e}"}, status_code=503
         )
     except ValueError as e:
-        from fastapi.responses import JSONResponse
-
         return JSONResponse({"detail": str(e)}, status_code=422)
+
+
+# Admission and counting run on the event loop, before a request enters a worker thread.
+# Downloads leave ordinary requests alone. Only the explicit restart drains writes.
+async def admit_update(request: Request, call_next):
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return await call_next(request)
+    state = request.app.state
+    install = request.url.path == "/api/update/install"
+    if getattr(state, "update_drain", False) or (install and getattr(state, "writers", 0)):
+        return JSONResponse({"detail": "仍有操作進行中，請稍後再試"}, status_code=409)
+    state.writers = getattr(state, "writers", 0) + 1
+    if install:
+        state.update_drain = True
+    try:
+        return await call_next(request)
+    finally:
+        state.writers -= 1
+        if install:
+            state.update_drain = updates.status()["phase"] == "installing"
+
+
+@app.get("/api/update")
+def update_status():
+    return updates.status()
+
+
+@app.post("/api/update/check")
+def check_update():
+    return updates.begin("check")
+
+
+@app.post("/api/update/download")
+def download_update():
+    return updates.begin("download")
+
+
+@app.post("/api/update/install")
+def install_update():
+    from onsei import modelmanager
+
+    if updates.status()["phase"] != "ready":
+        raise HTTPException(409, "尚無可安裝的更新")
+    with registry() as db:
+        for identity, saved in db.execute("SELECT id,path FROM projects"):
+            try:
+                path = project_location(REGISTRY.parent, identity, saved)
+            except ValueError:
+                continue  # External project registered on another operating system.
+            if not (path / "project.db").is_file():
+                continue
+            store = Store(path)
+            recover(store)
+            if store.active_jobs() or (latest_import(store) or {}).get("status") == "running":
+                raise HTTPException(409, "仍有處理或匯入任務，請在完成後再安裝")
+    for name in modelmanager.models.REGISTRY:
+        if (modelmanager.read_job(name) or {}).get("status") in modelmanager.ACTIVE:
+            raise HTTPException(409, "仍有模型正在下載，請在完成後再安裝")
+    return updates.install()
 
 
 class CreateProject(BaseModel):
@@ -849,10 +901,18 @@ def resolve_report(code: str):
 
 
 static = ROOT / "frontend/dist"
+
+
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+@app.api_route("/index.html", methods=["GET", "HEAD"], include_in_schema=False)
+def frontend_entry():
+    # Reproducible release archives can give successive HTML shells the same
+    # timestamp and size. Always serve the shell naming this build's assets.
+    index = static / "index.html"
+    if index.is_file():
+        return FileResponse(index, headers={"Cache-Control": "no-store"})
+    return {"message": "Build the frontend: cd frontend && npm ci && npm run build"}
+
+
 if static.exists():
     app.mount("/", StaticFiles(directory=static, html=True), name="ui")
-else:
-
-    @app.get("/")
-    def not_built():
-        return {"message": "Build the frontend: cd frontend && npm ci && npm run build"}

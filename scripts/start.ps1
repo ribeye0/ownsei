@@ -6,8 +6,11 @@ $env:UV_PYTHON_INSTALL_DIR = Join-Path $root '.tools\python'
 $python = Join-Path $root '.venv\Scripts\python.exe'
 $ready = $false
 if (Test-Path -LiteralPath $python) {
-    & $python (Join-Path $PSScriptRoot 'install_state.py')
-    $ready = $LASTEXITCODE -eq 0
+    $ready = Test-Path -LiteralPath '.runtime-envs/update/backup/plan.json'
+    if (!$ready) {
+        & $python (Join-Path $PSScriptRoot 'install_state.py')
+        $ready = $LASTEXITCODE -eq 0
+    }
 }
 if (!$ready) { & (Join-Path $PSScriptRoot 'install.ps1') }
 & $python (Join-Path $PSScriptRoot 'launch.py') @args

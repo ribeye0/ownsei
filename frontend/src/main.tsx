@@ -10,6 +10,7 @@ import { useAsrFilter } from "./AsrFilterSettings";
 import { ProcessingDialog } from "./ProcessingDialog";
 import { t as ui } from "./i18n";
 import { translationDefaults } from "./TranslationSettings";
+import { AboutDialog } from "./AboutDialog";
 import { Modal } from "./Modal";
 import { usePreferences } from "./usePreferences";
 import React, { useEffect, useRef, useState } from "react";
@@ -1301,18 +1302,7 @@ function App() {
           </div>
         </Modal>
       ) : dialog === "about" ? (
-        <Modal title={ui("關於 Ownsei")} onClose={() => setDialog("")} className="about-dialog">
-          <div>
-            <b>Ownsei v{__OWNSEI_VERSION__}</b>
-            <p>{ui("在本機將日語音聲轉錄為日文逐字稿，翻譯成中文字幕，並依原音校對與匯出。")}</p>
-          </div>
-          <div className="manager-actions">
-            <button type="button" disabled>{ui("檢查更新（尚未開放）")}</button>
-            <a href="https://github.com/ribeye0/ownsei/releases/latest" target="_blank" rel="noopener noreferrer">
-              GitHub Releases <span aria-hidden="true">↗</span>
-            </a>
-          </div>
-        </Modal>
+        <AboutDialog version={__OWNSEI_VERSION__} draftDirty={draftDirty} onClose={() => setDialog("")}/>
       ) : dialog === "shortcuts" ? (
         <Modal
           title={ui("快捷鍵說明")}

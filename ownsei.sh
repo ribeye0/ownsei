@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-if [[ ! -x .venv/bin/python ]] || ! .venv/bin/python scripts/install_state.py; then
+if [[ ! -x .venv/bin/python ]] || { [[ ! -f .runtime-envs/update/backup/plan.json ]] && ! .venv/bin/python scripts/install_state.py; }; then
   bash scripts/install.sh
 fi
 exec .venv/bin/python scripts/launch.py "$@"
