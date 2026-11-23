@@ -88,7 +88,9 @@ def test_higher_threshold_and_minimum_duration_reject_short_low_confidence_event
     def detect(threshold, min_ms):
         collector = Intervals(
             2000,
-            normalize_settings("firered", {"threshold": threshold, "min_speech_ms": min_ms, "pad_ms": 0}),
+            normalize_settings("firered", {
+                "threshold": threshold, "min_speech_ms": min_ms, "min_silence_ms": 500, "pad_ms": 0,
+            }),
         )
         for t in range(5, 2000, 10):
             collector.feed(0.5 if 100 <= t < 250 else 0.9 if 1000 <= t < 1500 else 0, t)

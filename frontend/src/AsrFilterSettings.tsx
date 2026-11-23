@@ -75,7 +75,12 @@ export function AsrFilterSettings({
             ...value.settings,
             ...(engine === "silero" ? { max_gain_db: 0 } : {}),
           }}
-          onChange={(settings) => onChange({ ...value, settings })}
+          onChange={(settings) => onChange({
+            ...value,
+            settings: engine === "silero"
+              ? { ...settings, max_gain_db: value.settings.max_gain_db }
+              : settings,
+          })}
           disabled={disabled}
         />
       )}

@@ -60,7 +60,7 @@ test('first visit follows system; saved manual choices survive and auto can be r
   setLocale('auto');assert.equal(localePreference(),'auto');assert.equal(locale(),'zh-Hant');
   browserLanguages=['zh-CN'];assert.equal(locale(),'zh-Hans');
   await fixture.reset({locale:'invalid'});assert.equal(localePreference(),'auto');
-  assert.equal(t('匯出字幕'),'导出字幕');assert.equal(t('較敏感（預設）'),'较敏感（默认）');
+  assert.equal(t('匯出字幕'),'导出字幕');assert.equal(t('一般（預設）'),'一般（默认）');
   setLocale('zh-Hant');browserLanguages=['en-US'];
 });
 

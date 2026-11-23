@@ -9,12 +9,20 @@ export type VadOptions = {
   max_region_ms: number;
   max_gain_db: number;
 };
-export const vadDefaults = (engine: string): VadOptions => ({
+const sensitivePreset = (engine: string): VadOptions => ({
   threshold: engine === "silero" ? 0.35 : 0.3,
   min_speech_ms: 100,
   min_silence_ms: 500,
   pad_ms: 300,
   max_region_ms: 15000,
+  max_gain_db: engine === "silero" ? 0 : 24,
+});
+export const vadDefaults = (engine: string): VadOptions => ({
+  threshold: 0.4,
+  min_speech_ms: 200,
+  min_silence_ms: 900,
+  pad_ms: 400,
+  max_region_ms: 24000,
   max_gain_db: engine === "silero" ? 0 : 24,
 });
 export function loadVadOptions(): Record<string, VadOptions> {
@@ -54,21 +62,12 @@ export function VadControls({
   const change = (key: keyof VadOptions, n: number) =>
     onChange({ ...value, [key]: n });
   const presets = [
-    ["較敏感（預設）", vadDefaults(engine)],
-    [
-      "一般",
-      {
-        ...vadDefaults(engine),
-        threshold: 0.5,
-        min_speech_ms: 200,
-        pad_ms: 250,
-        max_gain_db: engine === "silero" ? 0 : 12,
-      },
-    ],
+    ["較敏感", sensitivePreset(engine)],
+    ["一般（預設）", vadDefaults(engine)],
     [
       "較保守",
       {
-        ...vadDefaults(engine),
+        ...sensitivePreset(engine),
         threshold: 0.65,
         min_speech_ms: 300,
         pad_ms: 200,
@@ -123,7 +122,7 @@ export function VadControls({
             {ui(
               "提高數值會更嚴格；預設 ",
             )}
-            {engine === "silero" ? "0.35" : "0.30"}
+            {vadDefaults(engine).threshold.toFixed(2)}
           </small>
         </label>
         <label>

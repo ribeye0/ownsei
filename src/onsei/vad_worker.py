@@ -66,7 +66,7 @@ class Intervals:
         return merged
 
 
-def bounded_regions(spans, probabilities, limit_ms=15000):
+def bounded_regions(spans, probabilities, limit_ms=CONFIG["max_region_ms"]):
     """Split long positive spans at low-probability frames; never drop their audio."""
     import numpy as np
 

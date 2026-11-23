@@ -12,11 +12,11 @@ LIMITS = {
     "max_gain_db": (0, 24, False),
 }
 DEFAULTS = {
-    "threshold": 0.3,
-    "min_speech_ms": 100,
-    "min_silence_ms": 500,
-    "pad_ms": 300,
-    "max_region_ms": 15000,
+    "threshold": 0.4,
+    "min_speech_ms": 200,
+    "min_silence_ms": 900,
+    "pad_ms": 400,
+    "max_region_ms": 24000,
     "max_gain_db": 24,
 }
 INTERNAL = {"block_ms": 60000, "context_ms": 2000, "gain_peak": 0.25}
@@ -28,7 +28,7 @@ def normalize_settings(engine, values=None):
     values = {} if values is None else values
     if not isinstance(values, dict) or values.keys() - LIMITS.keys():
         raise ValueError("不支援的 VAD 參數")
-    result = {**DEFAULTS, **({"threshold": 0.35, "max_gain_db": 0} if engine == "silero" else {}), **values}
+    result = {**DEFAULTS, **({"max_gain_db": 0} if engine == "silero" else {}), **values}
     for name, (lower, upper, integer) in LIMITS.items():
         value = result[name]
         if (
