@@ -10,7 +10,7 @@ from onsei.domain import Cue, Track
 from onsei.global_preferences import load_global, save_global
 from onsei.preferences import (
     DEFAULT_STYLES,
-    _OLD_HANS,
+    _OLD_SIMPLIFIED_STYLES,
     _OLD_TRADITIONAL_STYLES,
     effective_glossary,
     pin_translation_settings,
@@ -168,7 +168,8 @@ def test_target_switch_uses_separate_prompts_and_preserves_legacy_custom_style()
 
 @pytest.mark.parametrize(
     ("target", "previous"),
-    [("zh-Hant", style) for style in _OLD_TRADITIONAL_STYLES] + [("zh-Hans", _OLD_HANS)],
+    [("zh-Hant", style) for style in _OLD_TRADITIONAL_STYLES]
+    + [("zh-Hans", style) for style in _OLD_SIMPLIFIED_STYLES],
 )
 def test_previous_factory_style_updates_editable_settings_but_not_pinned_jobs(target, previous):
     current = DEFAULT_STYLES[target]

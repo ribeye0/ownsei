@@ -28,8 +28,10 @@ _OLD_HANS = (
 )
 _OLD_TRADITIONAL_STYLES = (
     _OLD_HANT,
+    STYLE_INSTRUCTION.replace("\n", "\n\n", 1),
     _OLD_HANT.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1),
 )
+_OLD_SIMPLIFIED_STYLES = (_OLD_HANS, SIMPLIFIED_STYLE_INSTRUCTION.replace("\n", "\n\n", 1))
 MAX_STYLE_LENGTH = 2000
 NAME_SUFFIXES = ("ちゃん", "くん", "君", "さん", "さま", "様", "先輩", "センパイ", "せんぱい", "殿")
 
@@ -46,7 +48,7 @@ def style_variants(settings):
     if not isinstance(custom, dict) or set(custom) - set(TARGETS):
         raise ValueError("翻譯風格只接受繁體與簡體版本")
     for target, style in custom.items():
-        old_styles = _OLD_TRADITIONAL_STYLES if target == "zh-Hant" else (_OLD_HANS,)
+        old_styles = _OLD_TRADITIONAL_STYLES if target == "zh-Hant" else _OLD_SIMPLIFIED_STYLES
         if style not in old_styles:
             variants[target] = validate_style(style)
     legacy = settings.get("translation_style")
@@ -58,7 +60,7 @@ def style_variants(settings):
         # stays attached to its original target without being rewritten.
         old_styles = (*_OLD_TRADITIONAL_STYLES, STYLE_INSTRUCTION)
         if target == "zh-Hans":
-            old_styles += (_OLD_HANS,)
+            old_styles += _OLD_SIMPLIFIED_STYLES
         if legacy not in old_styles:
             variants[target] = validate_style(legacy)
     return variants
