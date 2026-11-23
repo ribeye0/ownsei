@@ -14,8 +14,15 @@ DOCUMENT_CONFIG = {
 }
 
 
+def drop_retired_format(value):
+    """Accept settings from saved jobs and older browser tabs."""
+    if isinstance(value, dict) and "compact_rows" in value:
+        return {key: item for key, item in value.items() if key != "compact_rows"}
+    return value
+
+
 def translation_options(settings=None, model=NATIVE_LONG):
-    value = (settings or {}).get("translation_options", {})
+    value = drop_retired_format((settings or {}).get("translation_options", {}))
     if not isinstance(value, dict):
         raise ValueError("Invalid translation settings")
     result = {
@@ -24,9 +31,6 @@ def translation_options(settings=None, model=NATIVE_LONG):
         "history": model == NATIVE_LONG,
         **value,
     }
-    compact_rows = result.pop("compact_rows", False)
-    if type(compact_rows) is not bool:
-        raise ValueError("Invalid translation settings")
     if (
         set(result) != {"context", "names", "history"}
         or type(result["context"]) is not int
@@ -35,8 +39,6 @@ def translation_options(settings=None, model=NATIVE_LONG):
         or type(result["history"]) is not bool
     ):
         raise ValueError("Invalid translation settings")
-    if compact_rows and model == NATIVE_LONG:
-        result["compact_rows"] = True
     return result
 
 

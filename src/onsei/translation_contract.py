@@ -30,11 +30,7 @@ def polluted(text: str | None) -> bool:
 
 
 def output_grammar(
-    ids: list[str],
-    spans: list[tuple[int, int]] | None = None,
-    sources: list[str] | None = None,
-    *,
-    compact_rows=False,
+    ids: list[str], spans: list[tuple[int, int]] | None = None, sources: list[str] | None = None
 ) -> str:
     """Exact ordered JSON rows with properly escaped strings, no extra fields.
 
@@ -56,20 +52,7 @@ def output_grammar(
         r'char ::= [^"\\{}<>\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4})',
         r"ws ::= [ \t\n\r]*",
     ]
-    if compact_rows:
-        if sources is None or spans is not None:
-            raise ValueError("Compact rows require IDs and source text")
-        # Unbounded whitespace between compact rows can exhaust the output
-        # budget without ever advancing to the next subtitle.
-        separator = " " + literal(",\n") + " "
-        rows = separator.join(f"row{i}" for i in range(len(ids)))
-        rules[0] = "root ::= " + literal("[\n") + " " + rows + " " + literal("\n]")
     for i, id in enumerate(ids):
-        if compact_rows:
-            # Force the complete ID and source with ordinary JSON escaping.
-            prefix = json.dumps({id: sources[i]}, ensure_ascii=False, separators=(",", ":"))[:-1] + ',"text":'
-            rules.append(f'row{i} ::= {literal(prefix)} text "}}"')
-            continue
         if spans is None:
             fields = f'{literal('"id"')} ws ":" ws {literal(json.dumps(id))}'
             suffix = ""

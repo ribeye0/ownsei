@@ -100,7 +100,6 @@ export function ProcessingSettings({
             </select>
           </label>
           <TranslationSettings
-            model={translation}
             value={options}
             onChange={onOptions}
             disabled={disabled}

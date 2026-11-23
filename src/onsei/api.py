@@ -8,16 +8,17 @@ import uuid
 from filelock import FileLock, Timeout as LockTimeout
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from onsei.api_system import router as system_router
 from onsei.models import ASR_MODELS, DEFAULT_ASR, DEFAULT_TRANSLATION, TRANSLATION_MODELS
+from onsei.context import drop_retired_format
 from onsei.audio import import_audio
 from onsei.importjobs import latest_import, read_import, start_import
 from onsei.export import export_track
@@ -546,7 +547,6 @@ class TranslationOptionsRequest(BaseModel):
     context: Literal[8192, 16384, 32768, 65536, 98304, 131072, 262144] | None = None
     names: bool | None = None
     history: bool | None = None
-    compact_rows: bool | None = None
 
 
 class JobRequest(BaseModel):
@@ -560,7 +560,9 @@ class JobRequest(BaseModel):
     translation_style: str | None = None
     continue_on_error: bool = False
     fresh_asr: bool = False
-    translation_options: TranslationOptionsRequest | None = None
+    translation_options: Annotated[TranslationOptionsRequest | None, BeforeValidator(drop_retired_format)] = (
+        None
+    )
     transcript_versions: dict[str, str] | None = None
     asr_filter: dict | None = None
     execution: dict | None = None

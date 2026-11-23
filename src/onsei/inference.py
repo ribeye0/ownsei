@@ -384,9 +384,6 @@ class Llama:
     def generate(self, data: dict) -> str:
         self.last_request = None
         preparation = time.monotonic()
-        compact_rows = bool(self.config.get("translation_options", {}).get("compact_rows"))
-        if compact_rows:
-            data = {**data, "compact_rows": True}
         prompt, lines, mapping = build_prompt(self.model, data)
 
         def render(value):
@@ -409,7 +406,7 @@ class Llama:
         data, prompt, rendered, input_tokens, document_context = fit_context(
             data, set(mapping), self.config["context"], budget, render, render(data)
         )
-        grammar = output_grammar(list(mapping), sources=[r["text"] for r in lines], compact_rows=compact_rows)
+        grammar = output_grammar(list(mapping), sources=[r["text"] for r in lines])
         request_id = str(time.time_ns())
         completion = {
             "prompt": rendered.json()["prompt"],
@@ -522,7 +519,7 @@ class Llama:
         raw = reply.get("content")
         if not isinstance(raw, str):
             raise ValueError("Translation response must contain text")
-        raw = normalize_grounded_reply(raw, lines, compact_rows=compact_rows)
+        raw = normalize_grounded_reply(raw, lines)
         found = parse_reply(raw, list(mapping))
         return json.dumps([{"id": mapping[i], "text": text} for i, text in found.items()], ensure_ascii=False)
 

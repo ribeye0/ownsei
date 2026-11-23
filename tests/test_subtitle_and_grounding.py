@@ -127,15 +127,3 @@ def test_honorific_word_matching_does_not_veto_contextual_relationships():
         "glossary": {},
     }
     assert validate_content({"1": "霍爾姆斯君在等學長"}, data)["1"] == []
-
-
-def test_compact_grounding_preserves_quotes_and_rejects_wrong_pairs():
-    lines = [{"id": "1", "text": '「"ねえ"」'}, {"id": "2", "text": "明日も？"}]
-    rows = [{"1": lines[0]["text"], "text": "欸"}, {"2": lines[1]["text"], "text": "明天也要？"}]
-    grammar = output_grammar(["1", "2"], sources=[row["text"] for row in lines], compact_rows=True)
-    assert grammar.splitlines()[0] == r'root ::= "[\n" row0 ",\n" row1 "\n]"'
-    output = normalize_grounded_reply(json.dumps(rows), lines, compact_rows=True)
-    assert json.loads(output) == [{"id": "1", "text": "欸"}, {"id": "2", "text": "明天也要？"}]
-    for bad in (rows[:-1], rows[::-1], [rows[0], rows[0]], [rows[0], {"2": lines[0]["text"], "text": "好"}]):
-        with pytest.raises(ValueError):
-            normalize_grounded_reply(json.dumps(bad), lines, compact_rows=True)

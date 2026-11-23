@@ -26,7 +26,4 @@ def model_config(model, settings=None):
     if model == "qwen3.5-4b-names":
         return {**CONFIG, "context": 32768}
     options = translation_options(settings, model)
-    config = {**CONFIG, **DOCUMENT_CONFIG, "context": options["context"], "translation_options": options}
-    if options.get("compact_rows"):
-        config["protocol"] = "ordered-keyed-source-v1"
-    return config
+    return {**CONFIG, **DOCUMENT_CONFIG, "context": options["context"], "translation_options": options}
