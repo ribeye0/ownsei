@@ -65,14 +65,14 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
       <p>{ui("先準備一個轉錄模型與一個翻譯模型即可開始。建議基本組合為 Haas＋NativeLong；其他模型依需要下載。")}</p>
       <div className="manager-actions"><button disabled={busy||!basic.length} onClick={()=>void download(basic)}>{ui("準備基本組合")}</button>
         <button disabled={busy||!selected.length} onClick={()=>void download(selected)}>{ui("準備勾選的模型")}</button></div>
-      <small>{ui("下載、環境安裝、校驗及 CPU 轉換分開顯示。關閉視窗會繼續；取消或中斷後可重試續傳。下載不佔用 GPU，安裝共用環境會等待處理任務。大小與顯存僅供估算。")}</small>
+      <small>{ui("下載、環境安裝與校驗分開顯示。關閉視窗會繼續；取消或中斷後可重試續傳。下載不佔用 GPU，安裝共用環境會等待處理任務。大小與顯存僅供估算。")}</small>
       <details className="environment-check"><summary>{environment ? environment.ready ? ui("環境檢查：通過") : ui("環境檢查：有項目需要處理") : ui("正在檢查部署環境…")}</summary>
         {environment?.checks.map(check=><p key={check.name} className={check.required&&!check.ok?"error":"code"}>[{check.ok?"OK":check.required?"ERROR":"INFO"}] {check.name}：{check.detail}</p>)}
         <small>{ui("缺少引擎或系統依賴時，請參考 README.md，執行 bash scripts/install.sh；不用預先下載所有模型。")}</small>
       </details>
       {error&&<p className="error" role="alert">{error}</p>}
       {deleting&&<div className="model-delete-confirm" role="alertdialog" aria-label={ui("確認刪除模型")}><p>{ui("確定刪除模型？")}{deleting.name}</p>
-        <p>{ui("會刪除模型權重與此模型的下載／轉換暫存；專案、字幕及共用執行環境保留，之後可重新下載。處理或準備任務進行中會阻止刪除。")}</p>
+        <p>{ui("會刪除模型權重與此模型的下載暫存；專案、字幕及共用執行環境保留，之後可重新下載。處理或準備任務進行中會阻止刪除。")}</p>
         <button disabled={busy} onClick={()=>setDeleting(null)}>{ui("取消")}</button><button className="danger" disabled={busy} onClick={()=>void remove()}>{ui("確認刪除模型")}</button>
       </div>}
       <div className="model-list">{models.map(model=><section key={model.id} className="model-card">

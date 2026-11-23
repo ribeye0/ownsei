@@ -22,6 +22,7 @@ from onsei.audio import import_audio
 from onsei.importjobs import latest_import, read_import, start_import
 from onsei.export import export_track
 from onsei.runner import cancel_job, recover, start_job, resume_job
+from onsei.project_paths import project_location
 from onsei.storage import Store, ConflictError
 from onsei.snapshots import fresh_exports
 from onsei.view import track_view
@@ -53,6 +54,16 @@ def registry():
         )
         if "trashed_at" not in {r[1] for r in db.execute("PRAGMA table_info(projects)")}:
             db.execute("ALTER TABLE projects ADD COLUMN trashed_at REAL")
+        if db.execute("PRAGMA user_version").fetchone()[0] == 0:
+            workspace = REGISTRY.parent
+            for identity, saved in db.execute("SELECT id,path FROM projects").fetchall():
+                try:
+                    location = project_location(workspace, identity, saved)
+                except ValueError:
+                    continue  # External registration from a different operating system.
+                if location == workspace / identity and location.parent == workspace:
+                    db.execute("UPDATE projects SET path=? WHERE id=?", (identity, identity))
+            db.execute("PRAGMA user_version=1")
         db.commit()
         with db:
             yield db
@@ -66,7 +77,7 @@ def registered_project(db, project_id: str, include_trash=False) -> Store:
         raise HTTPException(404, "Unknown project")
     if row[1] is not None and not include_trash:
         raise HTTPException(410, "專案已刪除，請先從垃圾桶還原。")
-    return Store(row[0])
+    return Store(project_location(REGISTRY.parent, project_id, row[0]))
 
 
 def project(project_id: str) -> Store:
@@ -133,12 +144,12 @@ def projects(trashed: bool = False):
         ).fetchall()
     for identity, path, trashed_at in rows:
         try:
-            s = Store(path)
+            s = Store(project_location(REGISTRY.parent, identity, path))
             recover(s)
             result.append(
                 {
                     "id": identity,
-                    "path": path,
+                    "path": str(s.path),
                     **s.settings(),
                     "tracks": len(s.tracks()),
                     "trashed_at": trashed_at,
@@ -154,7 +165,7 @@ def create_project(body: CreateProject):
     identity = uuid.uuid4().hex[:12]
     if body.path and body.copy_from:
         raise ValueError("不能同時指定既有目錄與複製來源")
-    path = Path(body.path).resolve() if body.path else ROOT / "workspace" / identity
+    path = Path(body.path).resolve() if body.path else REGISTRY.parent / identity
     existing_data = (path / "project.db").exists()
     if body.copy_from:
         from onsei.project_copy import copy_project
@@ -165,12 +176,17 @@ def create_project(body: CreateProject):
         if not existing_data:
             s.update_settings(updated_preferences(s.settings(), {"target_language": body.target_language}))
     with registry() as db:
-        existing = db.execute("SELECT id,trashed_at FROM projects WHERE path=?", (str(s.path),)).fetchone()
+        relative_key = s.path.name if s.path.parent == REGISTRY.parent else None
+        existing = db.execute(
+            "SELECT id,trashed_at FROM projects WHERE path IN (?,?)", (str(s.path), relative_key)
+        ).fetchone()
         if existing:
             if existing[1] is not None:
                 raise HTTPException(409, "這個專案已在垃圾桶，請使用還原功能。")
             return {"id": existing[0]}
-        db.execute("INSERT INTO projects(id,path) VALUES (?,?)", (identity, str(s.path)))
+        db.execute(
+            "INSERT INTO projects(id,path) VALUES (?,?)", (identity, str(s.path) if body.path else identity)
+        )
     return {"id": identity}
 
 
@@ -544,7 +560,9 @@ class JobRequest(BaseModel):
 def new_job(p: str, body: JobRequest):
     if body.action not in ("run", "transcribe", "translate", "export"):
         raise HTTPException(422, "Unknown action")
-    if body.asr not in ASR_MODELS or body.translation not in TRANSLATION_MODELS:
+    if (
+        body.action in ("run", "transcribe") and body.asr not in ASR_MODELS
+    ) or body.translation not in TRANSLATION_MODELS:
         raise HTTPException(422, "Unknown model")
     options = body.model_dump(exclude={"action"})
     from onsei.backend import normalize_execution
@@ -558,8 +576,6 @@ def new_job(p: str, body: JobRequest):
 
         try:
             normalized = normalize_filter(body.asr_filter)
-            if normalized["enabled"] and not body.asr.startswith("haas-ja-v1.0"):
-                raise ValueError("台詞篩選目前僅支援 Haas")
         except ValueError as error:
             raise HTTPException(422, str(error))
         options["asr_filter"] = {k: v for k, v in normalized.items() if k != "pipeline"}

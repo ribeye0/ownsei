@@ -86,7 +86,7 @@ def detect_and_filter(audio, directory, duration_ms, spans, options, progress):
         ]
         with log.open("w") as file:
             process = subprocess.Popen(
-                command, env=worker_env("vad"), stdout=subprocess.PIPE, stderr=file, text=True
+                command, env=worker_env(), stdout=subprocess.PIPE, stderr=file, text=True
             )
             try:
                 for line in process.stdout:

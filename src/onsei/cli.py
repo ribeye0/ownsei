@@ -43,11 +43,11 @@ def model_prepare(model: str = DEFAULT_ASR):
 
 @app.command("runtime")
 def prepare_runtime(kind: str):
-    """Prepare an optional pinned CPU VAD / Whisper / CUDA Whisper runtime."""
+    """Prepare the pinned FireRedVAD CPU runtime."""
     from onsei.models import setup_runtime
 
-    if kind not in ("vad", "whisper", "whisper-cuda", "whisper-convert"):
-        raise typer.BadParameter("Supported: vad, whisper, whisper-cuda, whisper-convert")
+    if kind != "vad":
+        raise typer.BadParameter("Supported: vad")
     setup_runtime(kind)
 
 
@@ -140,7 +140,9 @@ def run(
 def serve(
     host: str = "127.0.0.1",
     port: int = 8878,
-    verbose: bool = typer.Option(False, "--verbose", help="Show all HTTP requests and server lifecycle logs."),
+    verbose: bool = typer.Option(
+        False, "--verbose", help="Show all HTTP requests and server lifecycle logs."
+    ),
 ):
     from onsei.server import run_server
 

@@ -75,18 +75,14 @@ def inspect_environment(*, runtimes=False, engines=True):
         )
         add("frontend", (ROOT / "frontend/dist/index.html").is_file(), str(ROOT / "frontend/dist"))
     if runtimes:
-        for kind in ("vad", "whisper"):
-            from onsei.models import venv_python
+        from onsei.models import venv_python, worker_env
 
-            python = venv_python(STATE / kind)
-            if not python.exists():
-                add(kind, False, "Optional runtime not installed", required=False)
-                continue
-            from onsei.models import worker_env
-
-            script = "import torch,fireredvad" if kind == "vad" else "import ctranslate2,faster_whisper"
-            ok, detail = command([str(python), "-c", script], env=worker_env(kind), timeout=30)
-            add(kind, ok, detail, required=False)
+        python = venv_python(STATE / "vad")
+        if python.exists():
+            ok, detail = command([str(python), "-c", "import torch,fireredvad"], env=worker_env(), timeout=30)
+        else:
+            ok, detail = False, "Optional runtime not installed"
+        add("vad", ok, detail, required=False)
     usage = shutil.disk_usage(ROOT)
     add(
         "disk",

@@ -14,11 +14,9 @@ export function missingProcessingModels(
   const required = new Set<string>();
   if (mode !== "translate") {
     required.add(asr);
-    if (asr.startsWith("haas-")) {
-      if (filter.enabled || execution.vad_engine === "firered")
-        required.add("firered-vad");
-      if (execution.vad_engine === "silero") required.add("silero-vad");
-    }
+    if (filter.enabled || execution.vad_engine === "firered")
+      required.add("firered-vad");
+    if (execution.vad_engine === "silero") required.add("silero-vad");
   }
   if (mode !== "transcribe") required.add(translation);
   return catalog.filter((model) => required.has(model.id) && !model.ready);

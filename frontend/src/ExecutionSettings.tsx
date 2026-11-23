@@ -5,13 +5,11 @@ export type ExecutionOptions = {
   asr_device: string;
   llm_device: string;
   vad_engine: string;
-  whisper_device: string;
 };
 const defaults: ExecutionOptions = {
   asr_device: "auto",
   llm_device: "auto",
   vad_engine: "firered",
-  whisper_device: "cpu",
 };
 type Inventory = Record<
   "speech" | "llama",
@@ -20,11 +18,11 @@ type Inventory = Record<
 export function useExecution() {
   const [value, setValue] = useState<ExecutionOptions>(() => {
     try {
+      const stored = JSON.parse(localStorage.getItem("ownsei:vulkan:execution:v1") || "{}");
       return {
-        ...defaults,
-        ...JSON.parse(
-          localStorage.getItem("ownsei:vulkan:execution:v1") || "{}",
-        ),
+        asr_device: stored.asr_device ?? defaults.asr_device,
+        llm_device: stored.llm_device ?? defaults.llm_device,
+        vad_engine: stored.vad_engine ?? defaults.vad_engine,
       };
     } catch {
       return defaults;
@@ -41,13 +39,11 @@ export function ExecutionSettings({
   value,
   onChange,
   mode,
-  asr,
   disabled = false,
 }: {
   value: ExecutionOptions;
   onChange: (v: ExecutionOptions) => void;
   mode: string;
-  asr: string;
   disabled?: boolean;
 }) {
   const [inventory, setInventory] = useState<Inventory | null>(null),
@@ -97,27 +93,7 @@ export function ExecutionSettings({
   return (
     <fieldset className="execution-settings">
       <legend>{ui("運算裝置")}</legend>
-      {mode !== "translate" &&
-        (asr.startsWith("haas-") ? (
-          select("asr_device", "speech", "轉錄裝置（speech.cpp）")
-        ) : (
-          <label>
-            {ui("Whisper 運算裝置")}
-            <select
-              disabled={disabled}
-              value={value.whisper_device}
-              onChange={(e) =>
-                onChange({ ...value, whisper_device: e.target.value })
-              }
-            >
-              <option value="cpu">CPU · INT8</option>
-              <option value="cuda">NVIDIA CUDA</option>
-            </select>
-            <small>
-              {ui("Whisper 使用 CT2；AMD／Intel GPU 加速請選 Haas")}
-            </small>
-          </label>
-        ))}
+      {mode !== "translate" && select("asr_device", "speech", "轉錄裝置（speech.cpp）")}
       {mode !== "transcribe" &&
         select("llm_device", "llama", "翻譯與人物整理裝置（llama.cpp）")}
       {error && <p className="error">{error}</p>}

@@ -136,7 +136,7 @@ def test_new_asr_version_retains_old(project):
 
 
 def test_word_ownership_and_readable_cue_splits():
-    from onsei.asr import whisper_spans
+    from onsei.asr import segment_spans
 
     part = {"start_ms": 23500, "owned_start_ms": 24000, "owned_end_ms": 48000}
     segment = {
@@ -151,7 +151,7 @@ def test_word_ownership_and_readable_cue_splits():
             {"text": "台詞", "start": 3, "end": 4},
         ],
     }
-    spans = whisper_spans(segment, part)
+    spans = segment_spans(segment, part)
     assert [s["text"] for s in spans] == ["はい。", "次の台詞"]
     assert spans[0]["start_ms"] == 24200
 
@@ -167,7 +167,7 @@ def test_exports_are_hidden_after_source_edits(project, tmp_path):
 
 
 def test_japanese_character_tokens_split_at_punctuation_and_join_windows(tmp_path):
-    from onsei.asr import whisper_spans, whisper_track_spans
+    from onsei.asr import segment_spans, native_track_spans
 
     part = {"start_ms": 0, "owned_start_ms": 0, "owned_end_ms": 24000}
     words = [
@@ -176,7 +176,7 @@ def test_japanese_character_tokens_split_at_punctuation_and_join_windows(tmp_pat
         {"text": "い殻。", "start": 8, "end": 9},
     ]
     segment = {"avg_logprob": -0.2, "words": words}
-    assert [s["text"] for s in whisper_spans(segment, part)] == ["吸い殻、空き缶……", "吸い殻。"]
+    assert [s["text"] for s in segment_spans(segment, part)] == ["吸い殻、空き缶……", "吸い殻。"]
     parts = []
     for i, offset, a, b, token, start, end in [
         (0, 0, 0, 24000, "自", 23.8, 24.1),
@@ -185,13 +185,13 @@ def test_japanese_character_tokens_split_at_punctuation_and_join_windows(tmp_pat
         output = tmp_path / f"{i}.json"
         output.write_text(
             json.dumps(
-                {"data": [{"avg_logprob": -0.2, "words": [{"text": token, "start": start, "end": end}]}]}
+                {"data": {"avg_logprob": -0.2, "words": [{"text": token, "start": start, "end": end}]}}
             )
         )
         parts.append(
             {"index": i, "start_ms": offset, "owned_start_ms": a, "owned_end_ms": b, "output": str(output)}
         )
-    spans = whisper_track_spans(parts)
+    spans = native_track_spans(parts)
     assert [s["text"] for s in spans] == ["自分です。"]
     assert (spans[0]["start_ms"], spans[0]["end_ms"]) == (23800, 25000)
 

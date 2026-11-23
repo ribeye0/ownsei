@@ -28,7 +28,7 @@ def test_all_translators_accept_the_same_context_choices(model, size):
 
 
 def test_catalog_contains_only_the_inference_scope():
-    assert ASR_MODELS == {"haas-ja-v1.0", "haas-ja-v1.0-f16", "whisper-ja-760m", "whisper-ja-1.5b"}
+    assert ASR_MODELS == {"haas-ja-v1.0", "haas-ja-v1.0-f16"}
     assert TRANSLATION_MODELS == {
         "index-nativelong-9b",
         "index-translate-9b",
@@ -113,7 +113,7 @@ def test_copy_route_keeps_the_original_project_separate(tmp_path, monkeypatch):
     response = client.post("/api/projects", json={"title": "copy", "copy_from": str(source.path)})
     assert response.status_code == 200
     with sqlite3.connect(api.REGISTRY) as db:
-        copied_path = Path(db.execute("SELECT path FROM projects").fetchone()[0])
+        copied_path = api.REGISTRY.parent / Path(db.execute("SELECT path FROM projects").fetchone()[0])
     assert copied_path != source.path and copied_path.is_relative_to(api.ROOT)
     assert source.settings()["title"] == "old"
 

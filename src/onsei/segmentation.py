@@ -70,7 +70,7 @@ def regions(audio, directory, duration_ms, settings, progress):
                 "--limit-ms",
                 str(duration_ms),
             ]
-            env = worker_env("vad")
+            env = worker_env()
         else:
             command = [
                 str(backend.binary("speech")),

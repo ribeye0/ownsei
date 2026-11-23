@@ -85,7 +85,8 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
     )
     assert any("NVIDIA-CUDA-EULA" in n for n in names) == target.endswith("cuda")
     contents = set(manifest["files"])
-    assert "scripts/launch.py" in contents
+    assert {"scripts/launch.py", "scripts/install_state.py"} <= contents
+    assert not any("whisper" in name for name in contents)
     if target.startswith("linux"):
         assert "ownsei.sh" in contents
         assert "scripts/install.sh" in contents
@@ -96,3 +97,23 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
         assert "runtimes/vad-windows.lock" in contents
         assert "runtimes/vad.lock" not in contents
         assert not any(n.endswith(".sh") for n in contents)
+
+
+def test_incomplete_install_and_changed_lock_require_setup(tmp_path):
+    import subprocess
+    import sys
+
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    marker_script = scripts / "install_state.py"
+    shutil.copyfile(ROOT / "scripts/install_state.py", marker_script)
+    (tmp_path / ".venv").mkdir()
+    lock = tmp_path / "uv.lock"
+    lock.write_text("first")
+    (tmp_path / "pyproject.toml").write_text("")
+    command = [sys.executable, str(marker_script)]
+    assert subprocess.run(command).returncode == 1
+    subprocess.run([*command, "--complete"], check=True)
+    assert subprocess.run(command).returncode == 0
+    lock.write_text("second")
+    assert subprocess.run(command).returncode == 1

@@ -16,11 +16,7 @@ from onsei.diskspace import GIB, RESERVE, capacity_message, existing_directory, 
 from onsei.catalog import (
     REGISTRY as REGISTRY,
     SPEECH_FILES as SPEECH_FILES,
-    WHISPER_MODELS as WHISPER_MODELS,
-    NATIVE_TIMING_MODELS as NATIVE_TIMING_MODELS,
     ASR_MODELS as ASR_MODELS,
-    WHISPER_CONVERSIONS as WHISPER_CONVERSIONS,
-    WHISPER_CONVERSION_CONFIG as WHISPER_CONVERSION_CONFIG,
     GGUF as GGUF,
     GGUF_SHA256 as GGUF_SHA256,
     DEFAULT_ASR as DEFAULT_ASR,
@@ -29,10 +25,6 @@ from onsei.catalog import (
     MODEL_INFO as MODEL_INFO,
     TRANSLATION_MODELS as TRANSLATION_MODELS,
 )
-
-
-def dependencies(name):
-    return []
 
 
 def translation_files(name):
@@ -44,9 +36,7 @@ def required_files(name):
         return ["model.pth.tar", "cmvn.ark"]
     if name in SPEECH_FILES:
         return [SPEECH_FILES[name][0]]
-    if name in WHISPER_MODELS:
-        return ["config.json", "tokenizer.json", "model.bin"]
-    return [GGUF[name]] if name in GGUF else ["config.json"]
+    return [GGUF[name]]
 
 
 def model_dir(name: str) -> Path:
@@ -88,7 +78,7 @@ def runtime_space_requirements(kind):
     if runtime_current(kind):
         return []
     # Include unpacked packages, wheels and build scratch space, not just weights.
-    installed = {"vad": 2, "whisper": 2, "whisper-cuda": 5, "whisper-convert": 5}.get(kind, 2) * GIB
+    installed = 2 * GIB
     if sys.platform == "win32":
         cache = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "uv/cache"
     else:
@@ -172,14 +162,22 @@ def notify(progress, stage, **details):
 def progress_bar(progress):
     from tqdm.auto import tqdm
 
-    counters = {"bytes_done": 0, "bytes_total": 0, "transfer_bytes_done": 0, "files_done": 0, "files_total": 0}
+    counters = {
+        "bytes_done": 0,
+        "bytes_total": 0,
+        "transfer_bytes_done": 0,
+        "files_done": 0,
+        "files_total": 0,
+    }
     guard = threading.RLock()
     last_report = 0.0
     finished = False
 
     class ReportProgress(tqdm):
         def __init__(self, *args, **kwargs):
-            self._transfer = "download" in kwargs.get("desc", "").lower() or "transfer" in kwargs.get("desc", "").lower()
+            self._transfer = (
+                "download" in kwargs.get("desc", "").lower() or "transfer" in kwargs.get("desc", "").lower()
+            )
             kwargs["disable"] = False
             super().__init__(*args, **kwargs)
 
@@ -278,8 +276,6 @@ def check_manifest(name, progress=None, *, verify=True):
             metadata.get("repo") != REGISTRY[name][0] or metadata.get("revision") != REGISTRY[name][1]
         ):
             return False
-        if name in WHISPER_CONVERSIONS and metadata.get("conversion") != WHISPER_CONVERSION_CONFIG:
-            return False
         hashes = metadata.get("sha256", {})
         if (
             not isinstance(hashes, dict)
@@ -314,7 +310,10 @@ def check_manifest(name, progress=None, *, verify=True):
                 return False
             notify(progress, "verify", message=f"校驗 {filename}", files_done=i + 1, files_total=len(hashes))
         if legacy_sft48:
-            atomic_json(directory / "onsei-model.json", {**metadata, "repo": REGISTRY[name][0], "revision": REGISTRY[name][1]})
+            atomic_json(
+                directory / "onsei-model.json",
+                {**metadata, "repo": REGISTRY[name][0], "revision": REGISTRY[name][1]},
+            )
         return True
     except (OSError, ValueError, TypeError, AttributeError):
         return False
@@ -368,16 +367,10 @@ def _prepare(name, progress):
             p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": {filename: expected}}
         )
         return p
-    if name in WHISPER_CONVERSIONS:
-        return prepare_whisper(name, progress)
     p = model_dir(name)
     if check_manifest(name, progress):
         return p
-    patterns = (
-        [GGUF[name], "README.md", "LICENSE*", "NOTICE*"]
-        if name in GGUF
-        else ["*.json", "*.safetensors", "*.bin", "*.txt", "*.model"]
-    )
+    patterns = [GGUF[name], "README.md", "LICENSE*", "NOTICE*"]
     download_snapshot(repo, revision, p, patterns, progress, force=(p / "onsei-model.json").exists())
     files = [x for x in p.iterdir() if x.is_file() and x.name != "onsei-model.json"]
     notify(progress, "verify", message="校驗模型檔案", files_done=0, files_total=len(files))
@@ -394,64 +387,8 @@ def _prepare(name, progress):
     return p
 
 
-def prepare_whisper(name: str, progress=None) -> Path:
-    """Convert pinned upstream weights on CPU; inference only needs the Whisper runtime."""
-    repo, revision, _ = REGISTRY[name]
-    destination = model_dir(name)
-    manifest = destination / "onsei-model.json"
-    expected = {"repo": repo, "revision": revision, "conversion": WHISPER_CONVERSION_CONFIG}
-    if manifest.exists():
-        try:
-            saved = json.loads(manifest.read_text())
-            hashes = saved.get("sha256", {})
-            notify(progress, "verify", message="校驗已轉換的 Whisper 檔案")
-            if all((saved.get(k) == v for k, v in expected.items())) and "model.bin" in hashes:
-                if all(
-                    (
-                        Path(f).name == f
-                        and (destination / f).is_file()
-                        and (file_hash(destination / f) == h)
-                        for f, h in hashes.items()
-                    )
-                ):
-                    return destination
-        except (OSError, ValueError, TypeError, AttributeError):
-            pass
-    source = ROOT / "models/.sources" / name
-    download_snapshot(repo, revision, source, ["*.json", "*.safetensors", "*.txt"], progress)
-    notify(progress, "verify", message="校驗 Whisper 來源權重")
-    if file_hash(source / "model.safetensors") != WHISPER_CONVERSIONS[name]:
-        raise ValueError("Whisper source SHA256 mismatch")
-    setup_runtime("whisper-convert", progress)
-    notify(progress, "convert", message="以 CPU 轉換 Whisper 為 CT2 INT8／FP16；此階段不使用 GPU")
-    subprocess.run(
-        [
-            str(runtime_python("whisper-convert")),
-            "-m",
-            "onsei.convert_whisper",
-            str(source),
-            str(destination),
-        ],
-        env=worker_env("whisper-convert"),
-        check=True,
-    )
-    atomic_json(
-        manifest,
-        {
-            **expected,
-            "source_sha256": WHISPER_CONVERSIONS[name],
-            "compute_type": "int8_float16",
-            "sha256": {x.name: file_hash(x) for x in destination.iterdir() if x.is_file()},
-        },
-    )
-    return destination
-
-
-def worker_env(kind: str) -> dict:
-    from onsei.backend import current
-
+def worker_env() -> dict:
     env = dict(os.environ)
-    env["ONSEI_WHISPER_DEVICE"] = current()["whisper_device"]
     env.update(
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
@@ -459,13 +396,4 @@ def worker_env(kind: str) -> dict:
         PYTHONPATH=str(ROOT / "src"),
         ONSEI_ROOT=str(ROOT),
     )
-    if sys.platform == "win32":
-        site = STATE / kind / "Lib/site-packages"
-        libs = [str(p) for p in (site / "nvidia").glob("*/bin")]
-        variable = "PATH"
-    else:
-        site = next((STATE / kind / "lib").glob("python*/site-packages"))
-        libs = [str(p) for p in (site / "nvidia").glob("*/lib")]
-        variable = "LD_LIBRARY_PATH"
-    env[variable] = os.pathsep.join(libs + [env.get(variable, "")])
     return env

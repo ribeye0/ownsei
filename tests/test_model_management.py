@@ -20,28 +20,29 @@ def local(tmp_path, monkeypatch):
         monkeypatch.setattr(module, "ROOT", tmp_path)
         monkeypatch.setattr(module, "STATE", state)
     monkeypatch.setattr(manager, "llama_binary", lambda: tmp_path / "llama-server")
+    import hashlib
+    from onsei import vad_worker
+
+    monkeypatch.setattr(
+        vad_worker, "HASHES", {k: hashlib.sha256(b"weights").hexdigest() for k in vad_worker.HASHES}
+    )
     return tmp_path
 
 
 def install_receipt(name):
     path = models.model_dir(name)
     path.mkdir(parents=True, exist_ok=True)
-    filename = models.GGUF.get(name, "model.bin" if name in models.WHISPER_MODELS else "model.safetensors")
-    (path / filename).write_bytes(b"weights")
-    if name not in models.GGUF:
-        (path / "config.json").write_text("{}")
-        (path / "tokenizer.json").write_text("{}")
+    for filename in models.required_files(name):
+        (path / filename).write_bytes(b"weights")
     metadata = {
         "repo": models.REGISTRY[name][0],
         "revision": models.REGISTRY[name][1],
         "sha256": {p.name: file_hash(p) for p in path.iterdir() if p.is_file()},
     }
-    if name in models.WHISPER_CONVERSIONS:
-        metadata["conversion"] = models.WHISPER_CONVERSION_CONFIG
     atomic_json(path / "onsei-model.json", metadata)
     kind = models.REGISTRY[name][2]
     if kind:
-        python = manager.STATE / kind / "bin/python"
+        python = models.venv_python(manager.STATE / kind)
         python.parent.mkdir(parents=True, exist_ok=True)
         python.touch()
     return path
@@ -135,7 +136,7 @@ def test_download_reporter_closes_before_verification_even_when_download_fails(l
 
 
 def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
-    state = job("whisper-ja-760m")
+    state = job("firered-vad")
     events = []
 
     def prepare(name, progress):
@@ -145,9 +146,9 @@ def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
         install_receipt(name)
 
     monkeypatch.setattr(models, "prepare", prepare)
-    manager.worker("whisper-ja-760m", state["id"])
+    manager.worker("firered-vad", state["id"])
     assert events == ["runtime", "download", "verify"]
-    assert manager.read_job("whisper-ja-760m")["status"] == "completed"
+    assert manager.read_job("firered-vad")["status"] == "completed"
     state = job("index-translate-9b")
     monkeypatch.setattr(models, "prepare", lambda *_: (_ for _ in ()).throw(RuntimeError("network failure")))
     manager.worker("index-translate-9b", state["id"])
@@ -155,7 +156,7 @@ def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
 
 
 def test_worker_resets_phase_specific_counters_before_verification(local, monkeypatch):
-    state = job("whisper-ja-760m")
+    state = job("firered-vad")
     phases = []
 
     def prepare(name, progress):
@@ -174,7 +175,7 @@ def test_worker_resets_phase_specific_counters_before_verification(local, monkey
         install_receipt(name)
 
     monkeypatch.setattr(models, "prepare", prepare)
-    manager.worker("whisper-ja-760m", state["id"])
+    manager.worker("firered-vad", state["id"])
     assert phases[0]["stage"] == "verify"
     assert phases[0]["bytes_done"] == phases[0]["bytes_total"] == phases[0]["transfer_bytes_done"] == 0
     assert phases[0]["files_done"] == 0 and phases[0]["files_total"] == 2
@@ -273,20 +274,21 @@ def test_dead_worker_marked_interrupted_and_invalid_identity_rejected(local):
 
 
 def test_delete_removes_only_model_and_its_source_and_preserves_runtime_and_works(local):
-    path = install_receipt("whisper-ja-760m")
-    source = local / "models/.sources/whisper-ja-760m"
+    path = install_receipt("firered-vad")
+    source = local / "models/.sources/firered-vad"
     source.mkdir(parents=True)
     (source / "model.bin").write_bytes(b"raw")
     work = local / "workspace/data"
     work.mkdir(parents=True)
     (work / "original.wav").write_bytes(b"audio")
-    job("whisper-ja-760m", status="completed")
-    result = manager.delete_model("whisper-ja-760m")
+    job("firered-vad", status="completed")
+    result = manager.delete_model("firered-vad")
     assert result["removed_bytes"] > 0 and not path.exists() and not source.exists()
-    assert manager.read_job("whisper-ja-760m")["status"] == "deleted"
-    assert (manager.STATE / "whisper/bin/python").exists() and (
-        work / "original.wav"
-    ).read_bytes() == b"audio"
+    assert manager.read_job("firered-vad")["status"] == "deleted"
+    assert (
+        models.venv_python(manager.STATE / "vad").exists()
+        and (work / "original.wav").read_bytes() == b"audio"
+    )
 
 
 @pytest.mark.parametrize("lock", ["gpu.lock", "model-operation.lock"])
@@ -315,7 +317,7 @@ def test_queued_preparation_blocks_delete(local):
 
 
 def test_runtime_lock_receipt_reuses_pinned_environment_without_network(local, monkeypatch):
-    kind = "whisper"
+    kind = "vad"
     uv = local / ".tools/uv"
     uv.parent.mkdir()
     uv.touch()
@@ -367,9 +369,9 @@ def test_full_log_download_is_untruncated_and_view_strips_terminal_controls(loca
 
 
 def test_partial_runtime_is_never_advertised_as_ready(local):
-    install_receipt("whisper-ja-760m")
-    atomic_json(manager.STATE / "whisper/onsei-runtime-installing.json", {"lock_sha256": "unfinished"})
-    model = next(m for m in manager.catalog()["models"] if m["id"] == "whisper-ja-760m")
+    install_receipt("firered-vad")
+    atomic_json(manager.STATE / "vad/onsei-runtime-installing.json", {"lock_sha256": "unfinished"})
+    model = next(m for m in manager.catalog()["models"] if m["id"] == "firered-vad")
     assert model["installed"] and not model["runtime_ready"] and not model["ready"]
 
 
@@ -378,11 +380,11 @@ def test_model_delete_respects_original_lock_through_shared_symlink(local, monke
     original.mkdir()
     manager.STATE.mkdir(parents=True, exist_ok=True)
     (manager.STATE / "gpu.lock").symlink_to(original / "gpu.lock")
-    path = install_receipt("whisper-ja-760m")
+    path = install_receipt("firered-vad")
     monkeypatch.setattr(manager, "tasks_pending", lambda: False)
     with FileLock(original / "gpu.lock"):
         with pytest.raises(ConflictError):
-            manager.delete_model("whisper-ja-760m")
+            manager.delete_model("firered-vad")
     assert path.exists()
 
 

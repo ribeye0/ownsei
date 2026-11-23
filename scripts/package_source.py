@@ -34,11 +34,7 @@ DIRECTORIES = {
     "scripts": {".py", ".sh", ".ps1", ".bat", ".cmd"},
     ".github/workflows": {".yml", ".yaml"},
 }
-RUNTIMES = tuple(
-    kind + suffix
-    for kind in ("vad", "whisper", "whisper-cuda", "whisper-convert")
-    for suffix in ("", "-windows")
-)
+RUNTIMES = ("vad", "vad-windows")
 ASSETS = ("ownsei-logo.png", "ownsei-logo-dark.png")
 SECRETS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
@@ -83,7 +79,7 @@ def audit(root: Path, files: list[Path]) -> list[dict]:
     return issues
 
 
-def package(root: Path, output: Path) -> dict:
+def package(root: Path, output: Path, *, source_commit: str | None = None) -> dict:
     files = source_files(root)
     issues = audit(root, files)
     if issues:
@@ -93,9 +89,16 @@ def package(root: Path, output: Path) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     archive = output / (prefix + ".tar.gz")
     epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
-    hashes = {str(p): hashlib.sha256((root / p).read_bytes()).hexdigest() for p in files}
+    hashes = {p.as_posix(): hashlib.sha256((root / p).read_bytes()).hexdigest() for p in files}
     manifest = json.dumps(
-        {"format": 1, "version": version, "files": hashes}, ensure_ascii=False, indent=2
+        {
+            "format": 1,
+            "version": version,
+            **({"source_commit": source_commit} if source_commit else {}),
+            "files": hashes,
+        },
+        ensure_ascii=False,
+        indent=2,
     ).encode()
     # Exclusive creation keeps an already reviewed bundle immutable.
     try:

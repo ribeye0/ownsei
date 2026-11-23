@@ -124,7 +124,7 @@ export function BatchDialog({
         execution,
         asr_filter: {
           ...asrFilter,
-          enabled: asrModel.startsWith("haas-ja-v1.0") && asrFilter.enabled,
+          enabled: asrFilter.enabled,
         },
         ...(mode === "translate"
           ? {

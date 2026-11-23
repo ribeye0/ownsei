@@ -12,7 +12,7 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from onsei.models import DEFAULT_ASR, DEFAULT_TRANSLATION
+from onsei.models import ASR_MODELS, DEFAULT_ASR, DEFAULT_TRANSLATION
 from onsei.metrics import GpuMetrics
 from onsei.storage import Store
 from onsei.util import STATE, atomic_json, gpu_lock_path
@@ -441,6 +441,8 @@ def resume_job(store, old):
         raise ValueError("試用版任務保留為歷史紀錄，請用處理音軌或批量處理建立新版任務")
     if old["status"] in ("queued", "waiting", "running", "cancelling"):
         raise ValueError("Job already active")
+    if old["action"] in ("transcribe", "run") and old["options"].get("asr", DEFAULT_ASR) not in ASR_MODELS:
+        raise ValueError("此轉錄模型已停止支援，請選擇 Haas 建立新任務。")
     job = store.new_job(old["action"], old["options"])
     job["resume"] = {
         "job_id": old["id"],

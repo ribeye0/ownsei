@@ -475,7 +475,7 @@ function App() {
       translation_options: translationOptions,
       asr_filter: {
         ...asrFilter,
-        enabled: asr.startsWith("haas-ja-v1.0") && asrFilter.enabled,
+        enabled: asrFilter.enabled,
       },
       execution,
     });

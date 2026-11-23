@@ -11,11 +11,11 @@ import sys
 import threading
 import time
 from contextlib import closing
-from pathlib import Path
 from filelock import FileLock, Timeout
 from onsei import models
 from onsei.environment import llama_binary
 from onsei.processes import alive, process_identity, process_owned, spawn_options, signal_group
+from onsei.project_paths import project_location
 from onsei.storage import ConflictError, Store
 from onsei.util import ROOT, STATE, atomic_json, gpu_lock_path
 
@@ -90,8 +90,6 @@ def catalog():
         label, role, parameters, format_, size, vram = INFO[name]
         have = installed(name)
         runtime_ok = runtime_ready(name)
-        dependencies = models.dependencies(name)
-        dependencies_ready = all(installed(d) and runtime_ready(d) for d in dependencies)
         job = read_job(name)
         location = models.model_dir(name)
         result.append(
@@ -112,9 +110,8 @@ def catalog():
                 "runtime_ready": runtime_ok,
                 "ready": have
                 and runtime_ok
-                and dependencies_ready
                 and not (job and (job["status"] in ACTIVE or job["status"] == "failed")),
-                "dependencies": dependencies,
+                "dependencies": [],
                 "path": str(location),
                 "bytes": bytes_on_disk(location),
                 "source_bytes": bytes_on_disk(ROOT / "models/.sources" / name),
@@ -127,7 +124,7 @@ def catalog():
 def start_download(names):
     if not names or len(names) > len(models.REGISTRY) or any((n not in models.REGISTRY for n in names)):
         raise ValueError("請選擇已登錄的模型")
-    requested = list(dict.fromkeys([d for n in names for d in [*models.dependencies(n), n]]))
+    requested = list(dict.fromkeys(names))
     # Check the combined selection before creating any jobs or child processes.
     models.check_prepare_space(requested)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -232,8 +229,12 @@ def tasks_pending():
     if not index.exists():
         return False
     with closing(sqlite3.connect(index)) as db:
-        for (path,) in db.execute("SELECT path FROM projects"):
-            if (Path(path) / "project.db").exists() and Store(path).active_jobs():
+        for identity, saved in db.execute("SELECT id,path FROM projects"):
+            try:
+                path = project_location(index.parent, identity, saved)
+            except ValueError:
+                continue
+            if (path / "project.db").exists() and Store(path).active_jobs():
                 return True
     return False
 

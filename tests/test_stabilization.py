@@ -344,8 +344,8 @@ def test_silent_worker_times_out_and_is_reaped(tmp_path, monkeypatch, closed_std
     import onsei.asr as asr
 
     monkeypatch.setenv("ONSEI_WORKER_IDLE_TIMEOUT", ".05")
-    monkeypatch.setattr(asr, "runtime_python", lambda _: Path(sys.executable))
-    monkeypatch.setattr(asr, "worker_env", lambda _: dict(os.environ))
+    monkeypatch.setattr(asr.backend, "device", lambda _: "CPU")
+    monkeypatch.setattr(asr.backend, "environment", lambda _: dict(os.environ))
     spawn = subprocess.Popen
     children = []
 
@@ -358,8 +358,7 @@ def test_silent_worker_times_out_and_is_reaped(tmp_path, monkeypatch, closed_std
     monkeypatch.setattr(asr.subprocess, "Popen", silent)
     with pytest.raises(RuntimeError, match="仍未退出" if closed_stdout else "沒有進展"):
         asr.invoke(
-            "whisper",
-            tmp_path,
+            tmp_path / "haas-ja-v1.0",
             tmp_path / "audio.wav",
             [{"output": str(tmp_path / "checkpoint.json")}],
             tmp_path,
@@ -405,7 +404,7 @@ def test_corrupt_worker_checkpoint_is_quarantined_and_recomputed(tmp_path, monke
 
         def __init__(self, *args, **kwargs):
             children.append(self)
-            checkpoint.write_text(json.dumps({"data": []}))
+            checkpoint.write_text(json.dumps({"data": {}}))
 
         def poll(self):
             return 0
@@ -414,11 +413,15 @@ def test_corrupt_worker_checkpoint_is_quarantined_and_recomputed(tmp_path, monke
             return 0
 
     monkeypatch.setattr(asr.subprocess, "Popen", Worker)
-    monkeypatch.setattr(asr, "runtime_python", lambda _: Path("/fake"))
-    monkeypatch.setattr(asr, "worker_env", lambda _: {})
+    monkeypatch.setattr(asr.backend, "device", lambda _: "CPU")
+    monkeypatch.setattr(asr.backend, "environment", lambda _: {})
     asr.invoke(
-        "whisper", tmp_path, tmp_path / "audio.wav", [{"output": str(checkpoint)}], tmp_path, lambda _: None
+        tmp_path / "haas-ja-v1.0",
+        tmp_path / "audio.wav",
+        [{"output": str(checkpoint)}],
+        tmp_path,
+        lambda _: None,
     )
     assert len(children) == 1
-    assert json.loads(checkpoint.read_text())["data"] == []
+    assert json.loads(checkpoint.read_text())["data"] == {}
     assert list(tmp_path.glob("*.invalid.json"))

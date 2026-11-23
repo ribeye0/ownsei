@@ -12,8 +12,7 @@ def test_windows_runtime_paths_select_windows_locks(tmp_path, monkeypatch):
     monkeypatch.setattr(models, "ROOT", tmp_path)
     monkeypatch.setattr(models.sys, "platform", "win32")
     assert models.venv_python(tmp_path).as_posix().endswith("Scripts/python.exe")
-    for kind in ("vad", "whisper", "whisper-cuda", "whisper-convert"):
-        assert models.runtime_lock(kind).name == kind + "-windows.lock"
+    assert models.runtime_lock("vad").name == "vad-windows.lock"
     monkeypatch.setattr(models.sys, "platform", "linux")
     assert models.venv_python(tmp_path).as_posix().endswith("bin/python")
     assert models.runtime_lock("vad").name == "vad.lock"

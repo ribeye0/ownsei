@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -79,12 +78,11 @@ def test_worker_failure_keeps_chunk_error_before_verbose_log_tail(tmp_path, monk
             return 1
 
     monkeypatch.setattr(asr.subprocess, "Popen", Worker)
-    monkeypatch.setattr(asr, "runtime_python", lambda _: Path("/fake"))
-    monkeypatch.setattr(asr, "worker_env", lambda _: {})
+    monkeypatch.setattr(asr.backend, "device", lambda _: "CPU")
+    monkeypatch.setattr(asr.backend, "environment", lambda _: {})
     with pytest.raises(RuntimeError) as error:
         asr.invoke(
-            "whisper",
-            tmp_path,
+            tmp_path / "haas-ja-v1.0",
             tmp_path / "audio.wav",
             [{"output": str(tmp_path / "part.json")}],
             tmp_path,

@@ -5,7 +5,7 @@ import ts from "typescript";
 const source = readFileSync(new URL('../src/processingOptions.ts', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.ESNext}}).outputText;
 const {missingProcessingModels} = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
-const catalog = ['haas-ja-v1.0-f16','whisper-ja-760m','index-nativelong-9b','firered-vad','silero-vad']
+const catalog = ['haas-ja-v1.0-f16','haas-ja-v1.0','index-nativelong-9b','firered-vad','silero-vad']
   .map(id => ({id, ready: false}));
 const execution = {vad_engine: 'firered'}, filter = {enabled: false};
 const missing = (mode, asr, executionOverride={}, filterOverride={}) => missingProcessingModels(
@@ -13,7 +13,7 @@ const missing = (mode, asr, executionOverride={}, filterOverride={}) => missingP
 ).map(m => m.id);
 test('single and batch processing require only models used by the selected stages', () => {
   assert.deepEqual(missing('translate','haas-ja-v1.0-f16'), ['index-nativelong-9b']);
-  assert.deepEqual(missing('transcribe','whisper-ja-760m'), ['whisper-ja-760m']);
+  assert.deepEqual(missing('transcribe','haas-ja-v1.0',{vad_engine:'none'}), ['haas-ja-v1.0']);
   assert.deepEqual(missing('run','haas-ja-v1.0-f16'), ['haas-ja-v1.0-f16','index-nativelong-9b','firered-vad']);
 });
 test('Silero segmentation and FireRed filtering have independent requirements without duplicate entries', () => {

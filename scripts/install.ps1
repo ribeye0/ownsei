@@ -8,6 +8,7 @@ function Run-Checked([string]$Program, [string[]]$Arguments) {
     & $Program @Arguments
     if ($LASTEXITCODE -ne 0) { throw "Command failed ($LASTEXITCODE): $Program" }
 }
+if (Test-Path -LiteralPath '.venv/ownsei-install.json') { Remove-Item -LiteralPath '.venv/ownsei-install.json' }
 New-Item -ItemType Directory -Force '.tools' | Out-Null
 if (!(Test-Path -LiteralPath $uv)) {
     $archive = Join-Path $root '.tools\uv.zip'
@@ -30,4 +31,5 @@ if (!(Test-Path 'frontend/dist/index.html')) {
     } finally { Pop-Location }
 }
 Run-Checked $python @('-m','onsei.cli','doctor','--strict')
+Run-Checked $python @('scripts/install_state.py','--complete')
 Write-Host 'Ownsei ready. Open Ownsei.cmd; download models in Model management.'

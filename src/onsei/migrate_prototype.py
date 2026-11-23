@@ -198,7 +198,7 @@ def migrate(state_path=None):
         with registry() as db:
             db.execute(
                 "INSERT INTO projects VALUES (?,?,?)",
-                (identity, str(destination), project["created_at"] if project.get("deleted") else None),
+                (identity, identity, project["created_at"] if project.get("deleted") else None),
             )
         report["projects"] += 1
     if report["projects"] or not (ROOT / "workspace/prototype-import-report.json").exists():

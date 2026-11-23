@@ -4,6 +4,11 @@ Set-Location -LiteralPath $root
 $env:PYTHONUTF8 = '1'
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $root '.tools\python'
 $python = Join-Path $root '.venv\Scripts\python.exe'
-if (!(Test-Path -LiteralPath $python)) { & (Join-Path $PSScriptRoot 'install.ps1') }
+$ready = $false
+if (Test-Path -LiteralPath $python) {
+    & $python (Join-Path $PSScriptRoot 'install_state.py')
+    $ready = $LASTEXITCODE -eq 0
+}
+if (!$ready) { & (Join-Path $PSScriptRoot 'install.ps1') }
 & $python (Join-Path $PSScriptRoot 'launch.py') @args
 exit $LASTEXITCODE

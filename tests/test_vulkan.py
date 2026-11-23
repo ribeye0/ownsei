@@ -216,7 +216,7 @@ def test_haas_precisions_never_share_checkpoints(tmp_path, monkeypatch):
     monkeypatch.setattr(backend, "devices", lambda e: [{"id": "CPU", "name": "CPU"}])
     writes = []
 
-    def invoke(kind, model, audio, items, directory, progress):
+    def invoke(model, audio, items, directory, progress):
         writes.append((model, directory))
         for item in items:
             Path(item["output"]).write_text(

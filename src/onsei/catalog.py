@@ -3,12 +3,6 @@
 REGISTRY = {
     "firered-vad": ("FireRedTeam/FireRedVAD", "7990aaccc6b7aec1e527743bd30201f2c4a03b8c", "vad"),
     "qwen3.5-4b-names": ("unsloth/Qwen3.5-4B-GGUF", "e87f176479d0855a907a41277aca2f8ee7a09523", None),
-    "whisper-ja-760m": (
-        "efwkjn/faster-whisper-ja-760M",
-        "341201ba3e542985d2ad3f78dafb9c1665535013",
-        "whisper",
-    ),
-    "whisper-ja-1.5b": ("efwkjn/whisper-ja-1.5B", "72c13fb7b6cc2a831780cdd79cd1a829e77bab02", "whisper"),
     "haas-ja-v1.0": ("sakasegawa/Haas-ja-v1.0-GGUF", "6b965d5007ba780585de51549d57a8c1c0d67c7e", "speech"),
     "haas-ja-v1.0-f16": (
         "sakasegawa/Haas-ja-v1.0-GGUF",
@@ -46,17 +40,8 @@ SPEECH_FILES = {
         "2fc312514e5fc4fa4ffd02b25c76a4853fa4130e8fb9777d01502183b01238cb",
     ),
 }
-WHISPER_MODELS = frozenset((name for name, (_, _, kind) in REGISTRY.items() if kind == "whisper"))
-NATIVE_TIMING_MODELS = WHISPER_MODELS | {"haas-ja-v1.0", "haas-ja-v1.0-f16"}
-ASR_MODELS = NATIVE_TIMING_MODELS
+ASR_MODELS = frozenset(("haas-ja-v1.0", "haas-ja-v1.0-f16"))
 
-WHISPER_CONVERSIONS = {"whisper-ja-1.5b": "0bf92cf794ebb2cef2699c24dc71184be6a1ac133cc3c64f228ea08173d0155f"}
-WHISPER_CONVERSION_CONFIG = {
-    "pipeline": 1,
-    "ctranslate2": "4.8.2",
-    "transformers": "4.57.6",
-    "quantization": "int8_float16",
-}
 GGUF = {
     "qwen3.5-4b-names": "Qwen3.5-4B-Q4_K_M.gguf",
     "index-translate-9b": "Index-Translate-9B.Q4_K_M.gguf",
@@ -83,22 +68,6 @@ MODEL_INFO = {
         "GGUF Q4_K_M · 32K context",
         2.741,
         "約 4–8 GiB；與翻譯模型交替載入",
-    ),
-    "whisper-ja-760m": (
-        "Whisper JA 760M",
-        "asr",
-        "760M",
-        "CT2 · CPU INT8 / NVIDIA CUDA",
-        1.5,
-        "CPU RAM 或 NVIDIA 約 2–4 GiB",
-    ),
-    "whisper-ja-1.5b": (
-        "Whisper JA 1.5B",
-        "asr",
-        "1.5B",
-        "CT2 · CPU INT8 / NVIDIA CUDA（首次 CPU 轉換）",
-        5.0,
-        "約 3–5 GiB",
     ),
     "haas-ja-v1.0": (
         "Haas JA Q8_0 · speech.cpp",

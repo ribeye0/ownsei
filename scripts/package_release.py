@@ -14,7 +14,7 @@ import tempfile
 import tomllib
 import zipfile
 
-from package_source import source_files, audit
+from package_source import source_files, audit, package
 from release_assets import engine_assets
 from setup_engines import install_engine
 
@@ -23,6 +23,7 @@ TARGETS = ("linux-x64-vulkan", "linux-x64-cuda", "windows-x64-vulkan", "windows-
 RUNTIME_SCRIPTS = {
     "setup.sh",
     "install.sh",
+    "install_state.py",
     "start.sh",
     "install.ps1",
     "start.ps1",
@@ -44,7 +45,9 @@ def production_files(root, platform):
         for p in source_files(root)
         if p.parts[0] not in {"tests", ".github", "frontend"}
         and (p.parts[0] != "scripts" or p.name in RUNTIME_SCRIPTS)
-        and not (platform == "linux" and (p.suffix in {".cmd", ".bat", ".ps1"} or p.name == "setup_ffmpeg.py"))
+        and not (
+            platform == "linux" and (p.suffix in {".cmd", ".bat", ".ps1"} or p.name == "setup_ffmpeg.py")
+        )
         and not (platform == "windows" and p.suffix == ".sh")
         and (p.parts[0] != "runtimes" or ("-windows." in p.name) == (platform == "windows"))
     ]
@@ -71,7 +74,7 @@ def trim_engine(directory, engine, platform):
     # Server bundles need only their runtime dependencies, never conversion/CLI tools.
 
 
-def build_release(root, output, target, cache, work):
+def build_release(root, output, target, cache, work, *, source_commit=None):
     if target not in TARGETS:
         raise ValueError("Unsupported release target")
     platform, _, backend = target.split("-")
@@ -107,9 +110,8 @@ def build_release(root, output, target, cache, work):
             "backend": backend,
             "asr_backend": "vulkan",
             "python": "3.12",
-            "source_commit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=root, text=True
-            ).strip(),
+            "source_commit": source_commit
+            or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
             "engines": engine_assets(platform, backend),
         }
         (directory / "release.json").write_text(json.dumps(metadata, indent=2) + "\n")
@@ -166,6 +168,46 @@ Haas uses speech.cpp Vulkan. Translation uses llama.cpp {backend.upper()}.
     return {"file": result.name, "bytes": result.stat().st_size, "sha256": sha, "target": target}
 
 
+def publish(root, output, targets, cache, work=None):
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=root):
+        raise ValueError("Commit or stash changes before building a release")
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    if output.exists() and (not output.is_dir() or any(output.iterdir())):
+        raise ValueError("Choose a new or empty release directory")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        tempfile.TemporaryDirectory(dir=work) as temp,
+        tempfile.TemporaryDirectory(dir=output.parent) as stage,
+    ):
+        snapshot = Path(temp) / "source"
+        snapshot.mkdir()
+        archive = Path(temp) / "commit.tar"
+        subprocess.run(["git", "archive", "-o", str(archive), commit], cwd=root, check=True)
+        with tarfile.open(archive) as contents:
+            contents.extractall(snapshot, filter="data")
+        npm = shutil.which("npm")
+        if not npm:
+            raise ValueError("npm is required to build the release UI")
+        for command in (["ci", "--no-audit", "--no-fund"], ["run", "build"]):
+            subprocess.run([npm, *command], cwd=snapshot / "frontend", check=True)
+        bundles = Path(stage) / "bundles"
+        source = package(snapshot, bundles, source_commit=commit)
+        path = Path(source["archive"])
+        results = [
+            {"file": path.name, "bytes": path.stat().st_size, "sha256": source["sha256"], "target": "source"}
+        ]
+        for target in targets:
+            results.append(build_release(snapshot, bundles, target, cache, work, source_commit=commit))
+        (bundles / "SHA256SUMS").write_text("".join(f"{r['sha256']}  {r['file']}\n" for r in results))
+        (bundles / "releases.json").write_text(
+            json.dumps([{**r, "source_commit": commit} for r in results], indent=2) + "\n"
+        )
+        if output.exists():
+            output.rmdir()
+        bundles.rename(output)
+        return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=TARGETS, action="append")
@@ -173,13 +215,12 @@ def main():
     parser.add_argument("--cache", type=Path, default=ROOT / "downloads")
     parser.add_argument("--work", type=Path, default=None)
     args = parser.parse_args()
-    results = []
-    for target in args.target or TARGETS:
-        result = build_release(ROOT, args.output, target, args.cache, args.work)
-        results.append(result)
-        print(json.dumps(result), flush=True)
-    (args.output / "SHA256SUMS").write_text("".join(f"{r['sha256']}  {r['file']}\n" for r in results))
-    (args.output / "releases.json").write_text(json.dumps(results, indent=2) + "\n")
+    targets = args.target or ["linux-x64-vulkan", "windows-x64-vulkan"]
+    try:
+        results = publish(ROOT, args.output.resolve(), targets, args.cache.resolve(), args.work)
+    except ValueError as error:
+        parser.error(str(error))
+    print(json.dumps(results, indent=2))
 
 
 if __name__ == "__main__":

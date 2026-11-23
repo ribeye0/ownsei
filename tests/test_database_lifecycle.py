@@ -109,7 +109,44 @@ def test_model_management_closes_workspace_index(tmp_path, monkeypatch, handles)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     with closing(sqlite3.connect(workspace / "index.db")) as db:
-        db.execute("CREATE TABLE projects(path TEXT)")
+        db.execute("CREATE TABLE projects(id TEXT,path TEXT)")
     monkeypatch.setattr(modelmanager, "ROOT", tmp_path)
     assert not modelmanager.tasks_pending()
     assert all(db.closed for db in handles)
+
+
+@pytest.mark.parametrize("keep_original", [False, True])
+def test_copied_legacy_registry_uses_local_projects_and_preserves_external_registration(
+    tmp_path, monkeypatch, keep_original
+):
+    import shutil
+
+    old, new = (tmp_path / name / "workspace" for name in ("old", "new"))
+    original = Store.create(old / "abc", "before upgrade")
+    external = Store.create(tmp_path / "elsewhere", "external")
+    with closing(sqlite3.connect(old / "index.db")) as db, db:
+        db.execute("CREATE TABLE projects(id TEXT PRIMARY KEY,path TEXT UNIQUE,trashed_at REAL)")
+        db.executemany(
+            "INSERT INTO projects VALUES (?,?,?)",
+            [
+                ("abc", str(original.path), 1),
+                ("ext", str(external.path), None),
+            ],
+        )
+    shutil.copytree(old, new)
+    if not keep_original:
+        shutil.rmtree(old)
+    monkeypatch.setattr(api, "ROOT", new.parent)
+    monkeypatch.setattr(api, "REGISTRY", new / "index.db")
+    monkeypatch.setattr(modelmanager, "ROOT", new.parent)
+    assert api.projects(trashed=True)[0]["path"] == str(new / "abc")
+    api.restore_project("abc")
+    copied = api.project("abc")
+    copied.update_settings({"title": "after upgrade"})
+    assert not keep_original or original.settings()["title"] == "before upgrade"
+    assert api.create_project(api.CreateProject(title="reopen", path=str(copied.path)))["id"] == "abc"
+    assert api.project("ext").path == external.path
+    with api.registry() as db:
+        assert dict(db.execute("SELECT id,path FROM projects")) == {"abc": "abc", "ext": str(external.path)}
+    copied.new_job("translate", {})
+    assert modelmanager.tasks_pending()

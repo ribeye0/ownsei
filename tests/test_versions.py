@@ -158,7 +158,7 @@ def test_legacy_transcript_times_are_marked_estimated_and_order_preserved(store)
     assert len(reopened.cues("t", "whisper")) == 50
 
 
-@pytest.mark.parametrize("model", ["whisper-ja-760m", "whisper-ja-1.5b"])
+@pytest.mark.parametrize("model", ["haas-ja-v1.0", "haas-ja-v1.0-f16"])
 def test_deleted_asr_really_reruns_and_gets_new_ids(store, tmp_path, monkeypatch, model):
     import onsei.asr as module
     from pathlib import Path
@@ -173,7 +173,10 @@ def test_deleted_asr_really_reruns_and_gets_new_ids(store, tmp_path, monkeypatch
     part = {"index": 0, "start_ms": 0, "end_ms": 2000, "owned_start_ms": 0, "owned_end_ms": 2000}
     monkeypatch.setattr(module, "chunks", lambda *args: [dict(part)])
 
-    def invoke(kind, model, audio, items, directory, progress):
+    monkeypatch.setattr(module.backend, "device", lambda _: "CPU")
+    monkeypatch.setattr(module.backend, "current", lambda: {"vad_engine": "none"})
+
+    def invoke(model, audio, items, directory, progress):
         for item in items:
             p = Path(item["output"])
             if not p.exists():
@@ -181,9 +184,10 @@ def test_deleted_asr_really_reruns_and_gets_new_ids(store, tmp_path, monkeypatch
                 p.write_text(
                     json.dumps(
                         {
-                            "data": [
-                                {"avg_logprob": -0.1, "words": [{"text": "はい。", "start": 0.1, "end": 0.9}]}
-                            ]
+                            "data": {
+                                "avg_logprob": -0.1,
+                                "words": [{"text": "はい。", "start": 0.1, "end": 0.9}],
+                            }
                         }
                     )
                 )
@@ -252,3 +256,23 @@ def test_view_reads_exports_from_same_snapshot_during_concurrent_change(store, m
     view = views.track_view(store, "t")
     assert set(view["files"]) == {p.name for p in files}
     assert fresh_exports(store) == []
+
+
+def test_retired_asr_can_translate_legacy_transcript_but_cannot_start_or_resume_transcription(
+    store, tmp_path, monkeypatch
+):
+    from onsei.runner import resume_job
+
+    monkeypatch.setattr(service, "REGISTRY", tmp_path / "index.db")
+    monkeypatch.setattr(service, "start_job", lambda *_: None)
+    client = TestClient(service.app, base_url="http://127.0.0.1")
+    p = client.post("/api/projects", json={"title": "previous version", "path": str(store.path)}).json()["id"]
+    options = {"asr": "whisper-ja-760m", "execution": {"whisper_device": "cuda"}, "track_ids": ["t"]}
+    endpoint = f"/api/projects/{p}/jobs"
+    assert client.post(endpoint, json={**options, "action": "transcribe"}).status_code == 422
+    response = client.post(endpoint, json={**options, "action": "translate"})
+    assert response.status_code == 200
+    assert response.json()["options"]["transcript_versions"] == {"t": "whisper"}
+    assert "whisper_device" not in response.json()["options"]["execution"]
+    with pytest.raises(ValueError, match="Haas"):
+        resume_job(store, {"action": "run", "options": options, "status": "failed"})

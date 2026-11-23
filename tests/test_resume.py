@@ -11,7 +11,7 @@ def test_resume_skips_finished_worker_units(tmp_path, monkeypatch):
     directory = tmp_path / "cache"
     directory.mkdir()
     done = directory / "0.json"
-    atomic_json(done, {"data": []})
+    atomic_json(done, {"data": {}})
     items = [{"index": i, "output": str(directory / f"{i}.json")} for i in range(3)]
     requests = []
 
@@ -22,7 +22,7 @@ def test_resume_skips_finished_worker_units(tmp_path, monkeypatch):
             request = json.loads(Path(args[0][-1]).read_text())
             requests.append(request)
             for item in request["items"]:
-                atomic_json(Path(item["output"]), {"data": []})
+                atomic_json(Path(item["output"]), {"data": {}})
 
         def wait(self, timeout=None):
             return 0
@@ -30,12 +30,12 @@ def test_resume_skips_finished_worker_units(tmp_path, monkeypatch):
         def poll(self):
             return 0
 
-    monkeypatch.setattr(module, "runtime_python", lambda _: Path("/fake/python"))
-    monkeypatch.setattr(module, "worker_env", lambda _: {})
+    monkeypatch.setattr(module.backend, "device", lambda _: "CPU")
+    monkeypatch.setattr(module.backend, "environment", lambda _: {})
     monkeypatch.setattr(module.subprocess, "Popen", Process)
-    module.invoke("whisper", Path("/fake/model"), Path("/fake/audio"), items, directory, lambda _: None)
+    module.invoke(Path("/fake/haas-ja-v1.0"), Path("/fake/audio"), items, directory, lambda _: None)
     assert [i["index"] for i in requests[0]["items"]] == [1, 2]
-    module.invoke("whisper", Path("/fake/model"), Path("/fake/audio"), items, directory, lambda _: None)
+    module.invoke(Path("/fake/haas-ja-v1.0"), Path("/fake/audio"), items, directory, lambda _: None)
     assert len(requests) == 1
 
 

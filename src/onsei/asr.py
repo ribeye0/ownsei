@@ -16,12 +16,8 @@ from onsei.audio import chunks, pcm
 from onsei.domain import Cue, subtitle_ja
 from onsei.models import (
     ASR_MODELS,
-    WHISPER_CONVERSIONS,
-    WHISPER_CONVERSION_CONFIG,
     REGISTRY,
     model_dir,
-    runtime_python,
-    worker_env,
     SPEECH_FILES,
 )
 from onsei.storage import Store
@@ -33,7 +29,8 @@ ASSEMBLY_CONFIG = {"pipeline": 1, "empty_rendered_cues": "omit_preserve_worker_a
 HAAS_CONFIG = {"pipeline": 3, "engine": "speech.cpp", "version": "0.11.2", "timestamps": "native_tdt"}
 
 
-def invoke(kind: str, model: Path, audio: Path, items: list[dict], directory: Path, progress):
+def invoke(model: Path, audio: Path, items: list[dict], directory: Path, progress):
+    kind = "speech"
     pending = []
     for item in items:
         checkpoint = Path(item["output"])
@@ -41,7 +38,7 @@ def invoke(kind: str, model: Path, audio: Path, items: list[dict], directory: Pa
             try:
                 saved = json.loads(checkpoint.read_text())
                 data = saved["data"]
-                if not isinstance(data, (list, dict)):
+                if not isinstance(data, dict):
                     raise ValueError("Invalid worker checkpoint")
             except (ValueError, KeyError, TypeError):
                 checkpoint.replace(checkpoint.with_suffix(f".{time.time_ns()}.invalid.json"))
@@ -52,9 +49,7 @@ def invoke(kind: str, model: Path, audio: Path, items: list[dict], directory: Pa
         return
     request = directory / f"{kind}-request.json"
     payload = {"kind": kind, "model": str(model), "audio": str(audio), "items": pending}
-    if kind == "speech":
-        name = model.name
-        payload.update(device=backend.device("speech"), filename=SPEECH_FILES[name][0])
+    payload.update(device=backend.device("speech"), filename=SPEECH_FILES[model.name][0])
     atomic_json(request, payload)
     log = directory / f"{kind}.log"
     progress(
@@ -65,16 +60,15 @@ def invoke(kind: str, model: Path, audio: Path, items: list[dict], directory: Pa
             "stage": kind,
         }
     )
-    runtime = "whisper-cuda" if kind == "whisper" and backend.current()["whisper_device"] == "cuda" else kind
     with log.open("a", encoding="utf-8") as errors:
         process = subprocess.Popen(
             [
-                sys.executable if kind == "speech" else str(runtime_python(runtime)),
+                sys.executable,
                 "-m",
-                "onsei.speech_worker" if kind == "speech" else "onsei.worker",
+                "onsei.speech_worker",
                 str(request),
             ],
-            env=backend.environment("speech") if kind == "speech" else worker_env(runtime),
+            env=backend.environment("speech"),
             stdout=subprocess.PIPE,
             stderr=errors,
             text=True,
@@ -113,11 +107,7 @@ def invoke(kind: str, model: Path, audio: Path, items: list[dict], directory: Pa
                         worker_error = str(event["error"])
                     if "completed" in event:
                         done += 1
-                        stage = {
-                            "whisper": "Whisper 日文轉錄",
-                            "speech": "Haas / speech.cpp 日文轉錄",
-                        }[kind]
-                        event["message"] = f"{stage}：{done}/{len(items)} 片段"
+                        event["message"] = f"Haas / speech.cpp 日文轉錄：{done}/{len(items)} 片段"
                         event["stage"] = kind
                         event["fraction"] = done / len(items)
                     progress(event)
@@ -164,7 +154,7 @@ def merge_spans(spans: list[dict]) -> list[dict]:
     return result
 
 
-def whisper_spans(segment: dict, part: dict) -> list[dict]:
+def segment_spans(segment: dict, part: dict) -> list[dict]:
     words = segment.get("words") or []
     owned = [
         w
@@ -222,38 +212,33 @@ def whisper_spans(segment: dict, part: dict) -> list[dict]:
     return spans
 
 
-def whisper_track_spans(parts: list[dict]) -> list[dict]:
-    return native_track_spans(parts, "whisper")
-
-
-def native_track_spans(parts: list[dict], kind: str) -> list[dict]:
+def native_track_spans(parts: list[dict]) -> list[dict]:
     """Segment owned tokens across ASR windows so a window edge does not split a cue."""
     words, fallback = [], []
     for part in parts:
-        data = json.loads(Path(part["output"]).read_text())["data"]
-        for segment in [data] if kind == "haas" else data:
-            if not segment.get("text", "").strip() and not segment.get("words"):
-                continue
-            if not segment.get("words"):
-                fallback.extend({**s, "chunk": part} for s in whisper_spans(segment, part))
-            for w in segment.get("words") or []:
-                midpoint = part["start_ms"] + (w["start"] + w["end"]) * 500
-                if part["owned_start_ms"] <= midpoint < part["owned_end_ms"]:
-                    words.append(
-                        {
-                            **w,
-                            "start": w["start"] + part["start_ms"] / 1000,
-                            "end": w["end"] + part["start_ms"] / 1000,
-                            "chunk": part,
-                            "confidence": segment.get("avg_logprob"),
-                        }
-                    )
+        segment = json.loads(Path(part["output"]).read_text())["data"]
+        if not segment.get("text", "").strip() and not segment.get("words"):
+            continue
+        if not segment.get("words"):
+            fallback.extend({**s, "chunk": part} for s in segment_spans(segment, part))
+        for w in segment.get("words") or []:
+            midpoint = part["start_ms"] + (w["start"] + w["end"]) * 500
+            if part["owned_start_ms"] <= midpoint < part["owned_end_ms"]:
+                words.append(
+                    {
+                        **w,
+                        "start": w["start"] + part["start_ms"] / 1000,
+                        "end": w["end"] + part["start_ms"] / 1000,
+                        "chunk": part,
+                        "confidence": segment.get("avg_logprob"),
+                    }
+                )
     words.sort(key=lambda w: (w["start"], w["end"]))
     if not words:
         return fallback
     segment = {"words": words, "avg_logprob": 0}
     part = {"start_ms": 0, "owned_start_ms": 0, "owned_end_ms": parts[-1]["owned_end_ms"] + 1000}
-    return fallback + whisper_spans(segment, part)
+    return fallback + segment_spans(segment, part)
 
 
 def transcribe(
@@ -271,8 +256,6 @@ def transcribe(
     from onsei.asr_filter import normalize_filter
 
     filter_options = normalize_filter(asr_filter)
-    if filter_options["enabled"] and not model.startswith("haas-ja-v1.0"):
-        raise ValueError("台詞篩選目前僅支援 Haas")
     track = store.track(track_id)
     signature = {
         "audio": track.sha256,
@@ -280,18 +263,13 @@ def transcribe(
         "config": ASR_CONFIG,
         "limit_ms": limit_ms,
     }
-    if model in WHISPER_CONVERSIONS:
-        signature["conversion"] = WHISPER_CONVERSION_CONFIG
-    if model.startswith("haas-ja-v1.0"):
-        signature["haas"] = HAAS_CONFIG
-        signature["weights"] = SPEECH_FILES[model]
-        signature["execution"] = {
-            "device": backend.device("speech"),
-            "vad_engine": backend.current()["vad_engine"],
-            "vad_settings": filter_options["settings"],
-        }
-    else:
-        signature["whisper_device"] = backend.current()["whisper_device"]
+    signature["haas"] = HAAS_CONFIG
+    signature["weights"] = SPEECH_FILES[model]
+    signature["execution"] = {
+        "device": backend.device("speech"),
+        "vad_engine": backend.current()["vad_engine"],
+        "vad_settings": filter_options["settings"],
+    }
     generation = generation or store.asr_nonce(track_id, model)
     if generation:
         signature["generation"] = generation
@@ -315,7 +293,7 @@ def transcribe(
     parts = chunks(audio, limit_ms)
     processed_duration_ms = parts[-1]["owned_end_ms"]
     segmentation = None
-    if model in SPEECH_FILES and backend.current()["vad_engine"] != "none":
+    if backend.current()["vad_engine"] != "none":
         from onsei.segmentation import regions
 
         settings = dict(filter_options["settings"])
@@ -324,9 +302,8 @@ def transcribe(
         parts, segmentation = regions(audio, directory, processed_duration_ms, settings, progress)
     for part in parts:
         part["output"] = str(directory / f"asr-{part['index']:05d}.json")
-    kind = REGISTRY[model][2]
-    invoke(kind, model_dir(model), audio, parts, directory, progress)
-    spans = merge_spans(native_track_spans(parts, "haas" if kind == "speech" else kind))
+    invoke(model_dir(model), audio, parts, directory, progress)
+    spans = merge_spans(native_track_spans(parts))
     vad_info = None
     if filter_options["enabled"]:
         from onsei.asr_filter import detect_and_filter
@@ -363,8 +340,7 @@ def transcribe(
                     "revision": REGISTRY[model][1],
                     "config": ASR_CONFIG,
                     "assembly_config": ASSEMBLY_CONFIG,
-                    **({"conversion": WHISPER_CONVERSION_CONFIG} if model in WHISPER_CONVERSIONS else {}),
-                    **({"haas": HAAS_CONFIG} if kind == "speech" else {}),
+                    "haas": HAAS_CONFIG,
                     "chunk": span["chunk"],
                     "execution": backend.current(),
                     **({"segmentation": segmentation} if segmentation else {}),

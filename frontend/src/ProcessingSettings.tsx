@@ -67,10 +67,9 @@ export function ProcessingSettings({
         value={execution}
         onChange={onExecution}
         mode={mode}
-        asr={asr}
         disabled={disabled}
       />
-      {mode !== "translate" && asr.startsWith("haas-") && (
+      {mode !== "translate" && (
         <AsrFilterSettings
           execution={execution}
           onExecution={onExecution}

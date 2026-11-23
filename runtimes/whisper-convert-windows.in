@@ -1,5 +1,0 @@
-# CPU-only conversion step. The inference runtime stays separate and lightweight.
-torch==2.10.0
-transformers==4.57.6
-ctranslate2==4.8.2
-numpy==2.5.3

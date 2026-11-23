@@ -12,7 +12,7 @@ from pathlib import Path
 from onsei.util import ROOT
 
 CURRENT = contextvars.ContextVar("execution", default=None)
-DEFAULTS = {"asr_device": "auto", "llm_device": "auto", "vad_engine": "firered", "whisper_device": "cpu"}
+DEFAULTS = {"asr_device": "auto", "llm_device": "auto", "vad_engine": "firered"}
 
 
 def binary(engine):
@@ -73,6 +73,9 @@ def devices(engine):
 
 
 def normalize_execution(value=None):
+    if isinstance(value, dict) and value.get("whisper_device") in ("cpu", "cuda"):
+        # Previous releases persisted this option even for Haas and translation jobs.
+        value = {k: v for k, v in value.items() if k != "whisper_device"}
     if value is not None and (not isinstance(value, dict) or set(value) - DEFAULTS.keys()):
         raise ValueError("不支援的運算設定")
     defaults = {k: os.environ.get("ONSEI_" + k.upper(), v) for k, v in DEFAULTS.items()}
@@ -84,8 +87,6 @@ def normalize_execution(value=None):
             raise ValueError(f"{key} 裝置格式無效；Haas 支援 Vulkan／CPU，翻譯另支援 CUDA")
     if result["vad_engine"] not in ("firered", "silero", "none"):
         raise ValueError("不支援的 VAD 引擎")
-    if result["whisper_device"] not in ("cpu", "cuda"):
-        raise ValueError("Whisper 目前僅支援 CPU 或 NVIDIA CUDA")
     return result
 
 
