@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from filelock import FileLock
 from onsei.util import ROOT, STATE, atomic_json, file_hash
-from onsei.user_paths import locks_dir, models_dir
+from onsei.user_paths import download_cache, library_setting, locks_dir, models_dir
 from onsei.diskspace import RESERVE, capacity_message, existing_directory, require_space
 
 from onsei.catalog import (
@@ -59,7 +59,11 @@ def check_prepare_space(names):
     requirements = []
     for name in dict.fromkeys(names):
         if not check_manifest(name, verify=False):
-            requirements.append((model_dir(name), int(MODEL_INFO[name][4] * 10**9 * 1.15)))
+            size = int(MODEL_INFO[name][4] * 10**9 * 1.15)
+            destination, cache = model_dir(name), download_cache()
+            requirements.append((destination, size))
+            if existing_directory(cache).stat().st_dev != existing_directory(destination).stat().st_dev:
+                requirements.append((cache, size))
     require_space(requirements)
 
 
@@ -180,7 +184,7 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
         files_total=0,
     )
     # The hub reads the Xet cache location when it is first imported.
-    os.environ.setdefault("HF_XET_CACHE", str(models_dir() / ".cache/xet"))
+    os.environ["HF_XET_CACHE"] = str(download_cache() / "xet")
     from huggingface_hub import snapshot_download
 
     reporter = progress_bar(progress) if progress is not None else None
@@ -191,7 +195,7 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
             revision=revision,
             local_dir=directory,
             allow_patterns=patterns,
-            cache_dir=models_dir() / ".cache/hub",
+            cache_dir=download_cache() / "hub",
             max_workers=4,
             force_download=force,
             **kwargs,
@@ -202,9 +206,9 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
             reporter.finish()
 
 
-def check_manifest(name, progress=None, *, verify=True):
+def check_manifest(name, progress=None, *, verify=True, directory=None):
     """One receipt contract; full hashes on preparation, metadata only for UI polling."""
-    directory = model_dir(name)
+    directory = model_dir(name) if directory is None else directory
     try:
         metadata = json.loads((directory / "onsei-model.json").read_text())
         if not isinstance(metadata, dict):
@@ -269,6 +273,8 @@ def prepare(name: str, progress=None) -> Path:
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "waiting", message="等待其他模型準備任務完成")
     with FileLock(locks_dir() / "model-operation.lock"):
+        if library_setting().exists() and not models_dir().is_dir():
+            raise ValueError("模型庫無法使用，請連接磁碟或更換位置")
         check_prepare_space([name])
         return _prepare(name, progress)
 
@@ -318,47 +324,61 @@ def _prepare(name, progress):
         binary("speech")
     elif kind:
         setup_runtime(kind, progress)
+    directory = model_dir(name)
+    if check_manifest(name, progress):
+        return directory
+    staging = download_cache() / "downloads" / name
     if name == "firered-vad":
         from onsei.vad_worker import HASHES
 
-        p = model_dir(name)
-        if check_manifest(name, progress):
-            return p
-        download_vad_weights(repo, revision, p, HASHES, progress)
-        atomic_json(p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": HASHES})
-        return p
-    if name in SPEECH_FILES:
-        p = model_dir(name)
-        if check_manifest(name, progress):
-            return p
-        filename, expected = SPEECH_FILES[name]
-        download_snapshot(repo, revision, p, [filename], progress)
-        notify(progress, "verify", message=f"校驗 {filename}")
-        if file_hash(p / filename) != expected:
-            (p / filename).unlink(missing_ok=True)
-            raise ValueError("speech.cpp model SHA256 mismatch")
-        atomic_json(
-            p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": {filename: expected}}
+        staging.mkdir(parents=True, exist_ok=True)
+        for filename, expected in HASHES.items():
+            existing = directory / filename
+            if not (staging / filename).exists() and existing.is_file() and file_hash(existing) == expected:
+                shutil.copy2(existing, staging / filename)
+        download_vad_weights(repo, revision, staging, HASHES, progress)
+        hashes = HASHES
+    else:
+        speech = name in SPEECH_FILES
+        filename, expected = SPEECH_FILES[name] if speech else (GGUF[name], GGUF_SHA256.get(name))
+        patterns = [filename] if speech else [filename, "README.md", "LICENSE*", "NOTICE*"]
+        download_snapshot(
+            repo, revision, staging, patterns, progress, force=(directory / "onsei-model.json").exists()
         )
-        return p
-    p = model_dir(name)
-    if check_manifest(name, progress):
-        return p
-    patterns = [GGUF[name], "README.md", "LICENSE*", "NOTICE*"]
-    download_snapshot(repo, revision, p, patterns, progress, force=(p / "onsei-model.json").exists())
-    files = [x for x in p.iterdir() if x.is_file() and x.name != "onsei-model.json"]
-    notify(progress, "verify", message="校驗模型檔案", files_done=0, files_total=len(files))
-    hashes = {}
-    for i, path in enumerate(files):
-        hashes[path.name] = file_hash(path)
-        notify(progress, "verify", message=f"校驗 {path.name}", files_done=i + 1, files_total=len(files))
-    if name in GGUF_SHA256 and hashes.get(GGUF[name]) != GGUF_SHA256[name]:
-        (p / GGUF[name]).unlink(missing_ok=True)
-        raise ValueError("Translation model SHA256 mismatch; retry to download the invalid file again")
-    atomic_json(
-        p / "onsei-model.json", {"repo": repo, "revision": revision, "file": GGUF.get(name), "sha256": hashes}
-    )
-    return p
+        files = [p for p in staging.iterdir() if p.is_file() and any(p.match(pat) for pat in patterns)]
+        hashes = {}
+        notify(progress, "verify", message="校驗模型檔案", files_done=0, files_total=len(files))
+        for i, path in enumerate(files):
+            hashes[path.name] = file_hash(path)
+            notify(progress, "verify", message=f"校驗 {path.name}", files_done=i + 1, files_total=len(files))
+        if filename not in hashes or (expected and hashes[filename] != expected):
+            (staging / filename).unlink(missing_ok=True)
+            raise ValueError(
+                "speech.cpp model SHA256 mismatch" if speech else "Translation model SHA256 mismatch"
+            )
+    metadata = {"repo": repo, "revision": revision, "sha256": hashes}
+    if name in GGUF:
+        metadata["file"] = GGUF[name]
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "onsei-model.json").unlink(missing_ok=True)
+    for filename, checksum in hashes.items():
+        source, target = staging / filename, directory / filename
+        try:
+            source.replace(target)
+        except OSError as error:
+            if error.errno != errno.EXDEV and getattr(error, "winerror", None) != 17:
+                raise
+            from tempfile import TemporaryDirectory
+
+            with TemporaryDirectory(dir=directory) as temp:
+                copied = Path(temp) / filename
+                shutil.copyfile(source, copied)
+                if file_hash(copied) != checksum:
+                    raise ValueError("Model SHA256 mismatch")
+                copied.replace(target)
+            source.unlink()
+    atomic_json(directory / "onsei-model.json", metadata)
+    return directory
 
 
 def worker_env() -> dict:

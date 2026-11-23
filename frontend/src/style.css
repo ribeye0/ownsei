@@ -2624,3 +2624,9 @@ progress::-moz-progress-bar {
 .stage-progress.failed small {
   color: var(--danger);
 }
+
+.model-library { border-bottom: 1px solid var(--border); padding-bottom: .75rem; }
+.model-library h3 { margin: 0 0 .25rem; }
+.model-library small, .model-library fieldset label { display: block; margin: .32rem 0; }
+.model-library .library-path { overflow-wrap: anywhere; }
+.model-library input:not([type]) { width: 100%; }

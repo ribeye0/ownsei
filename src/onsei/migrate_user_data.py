@@ -40,7 +40,7 @@ def import_user_data(installation: Path):
             new.parent.mkdir(parents=True, exist_ok=True)
             with TemporaryDirectory(dir=new.parent, prefix=".import-") as staging:
                 staged = Path(staging) / name
-                shutil.copytree(old, staged)
+                shutil.copytree(old, staged, ignore=shutil.ignore_patterns(".cache"))
                 staged.rename(new)
             copied.append(name)
     return {"directory": str(config_dir()), "imported": copied, "already_present": existing}

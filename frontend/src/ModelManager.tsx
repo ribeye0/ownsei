@@ -1,5 +1,6 @@
 import {useEffect, useState} from "react";
 import {api} from "./api";
+import {ModelLibrary, type Library} from "./ModelLibrary";
 import {Modal} from "./Modal";
 import {modelDownload} from "./modelDownload";
 import {t as ui} from "./i18n";
@@ -27,6 +28,7 @@ function DownloadProgress({job, estimate}:{job:Job; estimate:number}) {
 export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=>void}) {
     const [models,setModels]=useState<ManagedModel[]>([]),[selected,setSelected]=useState<string[]>([]);
     const [environment,setEnvironment]=useState<Environment|null>(null),[error,setError]=useState("");
+    const [library,setLibrary]=useState<Library|null>(null);
     const [busy,setBusy]=useState(false),[deleting,setDeleting]=useState<ManagedModel|null>(null);
     const [logModel,setLogModel]=useState(""),[log,setLog]=useState("");
     const basic = models.filter(m=>m.basic&&!active(m.job)).map(m=>m.id);
@@ -34,7 +36,7 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
         const controller=new AbortController(); let pending=false;
         async function load() {
             if (pending) return; pending=true;
-            try {const data=await api<{models:ManagedModel[]}>("/models","GET",undefined,{signal:controller.signal});if(!controller.signal.aborted)setModels(data.models);}
+            try {const data=await api<{models:ManagedModel[];library:Library}>("/models","GET",undefined,{signal:controller.signal});if(!controller.signal.aborted){setModels(data.models);setLibrary(data.library);}}
             catch(e){if(!controller.signal.aborted)setError(String(e));} finally{pending=false;}
         }
         void load(); const timer=setInterval(()=>void load(),1500);
@@ -62,6 +64,7 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
         setBusy(true);setError("");try{await api(`/models/${id}/cancel`,"POST");setModels((await api<{models:ManagedModel[]}>("/models")).models);}catch(e){setError(String(e));}finally{setBusy(false);}
     }
     return <Modal title={ui("模型管理與環境檢查")} onClose={onClose} busy={busy} className="model-manager">
+      {library && <ModelLibrary library={library} used={models.reduce((total,m)=>total+m.bytes,0)} size={size} busy={busy} setBusy={setBusy} onChange={value=>{setLibrary(value);setSelected([]);onChanged();}} onError={setError}/>}
       <p>{ui("先準備一個轉錄模型與一個翻譯模型即可開始。建議基本組合為 Haas＋NativeLong；其他模型依需要下載。")}</p>
       <div className="manager-actions"><button disabled={busy||!basic.length} onClick={()=>void download(basic)}>{ui("準備基本組合")}</button>
         <button disabled={busy||!selected.length} onClick={()=>void download(selected)}>{ui("準備勾選的模型")}</button></div>

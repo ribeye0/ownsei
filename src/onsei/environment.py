@@ -82,16 +82,21 @@ def inspect_environment(*, runtimes=False, engines=True):
     if runtimes:
         from onsei.models import worker_env
 
-        ok, detail = command([sys.executable, "-c", "import ncnn, kaldi_native_fbank"], env=worker_env(), timeout=30)
+        ok, detail = command(
+            [sys.executable, "-c", "import ncnn, kaldi_native_fbank"], env=worker_env(), timeout=30
+        )
         add("vad", ok, detail, required=False)
     from onsei.diskspace import existing_directory
     from onsei.user_paths import config_dir, models_dir
 
-    usage = shutil.disk_usage(existing_directory(models_dir()))
+    try:
+        free = shutil.disk_usage(existing_directory(models_dir())).free
+    except OSError:
+        free = 0
     add(
         "disk",
-        usage.free >= 15 * 1024**3,
-        f"{usage.free / 1024**3:.1f} GiB available; optional models need additional space",
+        free >= 15 * 1024**3,
+        f"{free / 1024**3:.1f} GiB available; optional models need additional space",
         required=False,
     )
     return {
@@ -102,7 +107,7 @@ def inspect_environment(*, runtimes=False, engines=True):
         "root": str(ROOT),
         "config_dir": str(config_dir()),
         "models_dir": str(models_dir()),
-        "free_bytes": usage.free,
+        "free_bytes": free,
     }
 
 

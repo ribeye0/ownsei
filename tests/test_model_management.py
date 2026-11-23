@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from filelock import FileLock
 
 from onsei import models, modelmanager as manager
-from onsei.user_paths import locks_dir, models_dir
+from onsei.user_paths import download_cache, locks_dir, models_dir
 from onsei.storage import ConflictError
 from onsei.util import atomic_json, file_hash
 
@@ -123,7 +123,7 @@ def test_download_reporter_closes_before_verification_even_when_download_fails(l
     held = []
 
     def snapshot(**kwargs):
-        assert kwargs["cache_dir"] == models_dir() / ".cache/hub"
+        assert kwargs["cache_dir"] == download_cache() / "hub"
         progress = kwargs["tqdm_class"](total=1000, unit="B", desc="Reconstructing")
         progress.update(100)
         held.append(progress)

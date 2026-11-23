@@ -1,7 +1,7 @@
 """System and model-management HTTP routes, independent of project storage."""
 
 import json
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -33,6 +33,32 @@ def model_catalog():
     from onsei.modelmanager import catalog
 
     return catalog()
+
+
+class LibraryChange(BaseModel):
+    path: str
+    mode: Literal["select", "move"]
+    expected_source: str
+
+
+@router.post("/api/models/library")
+def model_library(body: LibraryChange):
+    from onsei.model_library import change_library
+
+    try:
+        return change_library(body.path, body.mode, body.expected_source)
+    except OSError as error:
+        raise HTTPException(422, str(error)) from error
+
+
+@router.post("/api/models/library/open")
+def model_library_open():
+    from onsei.model_library import open_library
+
+    try:
+        return open_library()
+    except OSError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 class ModelDownloads(BaseModel):

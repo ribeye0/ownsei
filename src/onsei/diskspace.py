@@ -14,6 +14,8 @@ class InsufficientSpace(ValueError):
 def existing_directory(path):
     directory = Path(path).resolve()
     while not directory.is_dir():
+        if directory == directory.parent:
+            raise FileNotFoundError(directory)
         directory = directory.parent
     return directory
 

@@ -13,7 +13,7 @@ import time
 from contextlib import closing
 from filelock import FileLock, Timeout
 from onsei import models
-from onsei.user_paths import locks_dir, models_dir
+from onsei.user_paths import config_dir, download_cache, library_setting, locks_dir, models_dir
 from onsei.environment import llama_binary
 from onsei.processes import alive, process_identity, process_owned, spawn_options, signal_group
 from onsei.project_paths import project_location
@@ -33,11 +33,22 @@ def paths(name):
     return (directory, directory / (name + ".json"))
 
 
+def live_download(state):
+    return state.get("status") in ACTIVE and (
+        alive(state) or (not state.get("pid") and time.time() - state["started_at"] < 20)
+    )
+
+
 def read_job(name):
     _, path = paths(name)
     with FileLock(STATE / "model-submit.lock"):
         try:
             state = json.loads(path.read_text())
+            origin = state.get("library") or (
+                str(config_dir() / "models") if library_setting().exists() else None
+            )
+            if origin and origin != str(models_dir()) and not live_download(state):
+                return None
         except FileNotFoundError:
             return None
         if (path.parent / (state["id"] + ".cancel")).exists():
@@ -55,11 +66,14 @@ def read_job(name):
 
 
 def bytes_on_disk(path):
-    return (
-        sum((p.stat().st_size for p in path.rglob("*") if p.is_file() and (not p.is_symlink())))
-        if path.exists()
-        else 0
-    )
+    size = 0
+    for file in path.rglob("*"):
+        try:
+            if file.is_file() and not file.is_symlink():
+                size += file.stat().st_size
+        except FileNotFoundError:
+            continue  # A downloader can publish or rename a file during polling.
+    return size
 
 
 def installed(name):
@@ -121,17 +135,30 @@ def catalog():
                 "dependencies": [],
                 "path": str(location),
                 "bytes": bytes_on_disk(location),
-                "source_bytes": bytes_on_disk(models_dir() / ".sources" / name),
+                "source_bytes": bytes_on_disk(download_cache() / "downloads" / name)
+                + bytes_on_disk(models_dir() / ".sources" / name),
                 "job": job,
             }
         )
-    return {"models": result, "basic": BASIC}
+    from onsei.model_library import library_info
+
+    return {"models": result, "basic": BASIC, "library": library_info()}
 
 
 def start_download(names):
+    try:
+        with FileLock(locks_dir() / "library-change.lock", timeout=0):
+            return _start_download(names)
+    except Timeout as error:
+        raise ConflictError("正在更換模型庫，請稍後再下載") from error
+
+
+def _start_download(names):
     if not names or len(names) > len(models.REGISTRY) or any((n not in models.REGISTRY for n in names)):
         raise ValueError("請選擇已登錄的模型")
     requested = list(dict.fromkeys(names))
+    if library_setting().exists() and not models_dir().is_dir():
+        raise ValueError("模型庫無法使用，請連接磁碟或更換位置")
     # Check the combined selection before creating any jobs or child processes.
     models.check_prepare_space(requested)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -153,6 +180,7 @@ def start_download(names):
             state = {
                 "id": identity,
                 "model": name,
+                "library": str(models_dir()),
                 "status": "queued",
                 "stage": "waiting",
                 "started_at": time.time(),
@@ -171,7 +199,7 @@ def start_download(names):
                 os.environ,
                 ONSEI_ROOT=str(ROOT),
                 PYTHONPATH=str(ROOT / "src"),
-                HF_XET_CACHE=str(models_dir() / ".cache/xet"),
+                HF_XET_CACHE=str(download_cache() / "xet"),
             )
             try:
                 with (directory / (identity + ".log")).open("w") as log:
@@ -263,7 +291,11 @@ def delete_model(name):
             ):
                 raise ConflictError("已有待處理或執行中任務，請完成後再刪除模型")
             removed = 0
-            targets = (models.model_dir(name), models_dir() / ".sources" / name)
+            targets = (
+                models.model_dir(name),
+                models_dir() / ".sources" / name,
+                download_cache() / "downloads" / name,
+            )
             for path in targets:
                 if path.is_symlink():
                     raise ValueError("模型目錄是符號連結，拒絕刪除")

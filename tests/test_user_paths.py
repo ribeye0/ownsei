@@ -8,7 +8,7 @@ from onsei import models
 from onsei.api import app
 from onsei.global_preferences import global_path, load_global
 from onsei.migrate_user_data import import_user_data
-from onsei.user_paths import config_dir, models_dir
+from onsei.user_paths import config_dir, data_dir, models_dir
 
 
 def test_config_follows_platform_not_install_location(tmp_path, monkeypatch):
@@ -35,10 +35,13 @@ def test_import_copies_complete_directories_and_preserves_newer_settings(tmp_pat
     source.mkdir(parents=True)
     (source / "onsei-model.json").write_text("{}")
     (source / "weights.gguf").write_bytes(b"gguf")
+    (source / ".cache").mkdir()
+    (source / ".cache/partial").touch()
     (old / "workspace").mkdir()
     (old / "workspace/global-preferences.json").write_text('{"revision":3,"glossary_entries":[]}')
     assert set(import_user_data(old)["imported"]) == {global_path().name, model}
-    assert models.model_dir(model) == config_dir() / "models" / model
+    assert models.model_dir(model) == data_dir() / "models" / model
+    assert not (models.model_dir(model) / ".cache").exists() and (source / ".cache/partial").exists()
     assert load_global() == {"revision": 3, "glossary_entries": []}
     target = models.model_dir(model) / "weights.gguf"
     assert target.read_bytes() == b"gguf"
@@ -53,7 +56,7 @@ def test_interrupted_model_import_leaves_no_partial_model(tmp_path, monkeypatch)
     model = "index-nativelong-9b"
     (tmp_path / "models" / model).mkdir(parents=True)
 
-    def interrupted(source, dest):
+    def interrupted(source, dest, **kwargs):
         dest.mkdir()
         (dest / "partial").touch()
         raise OSError("full disk")
