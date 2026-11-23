@@ -65,8 +65,6 @@ Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自�
   <a href="docs/architecture.svg"><img src="docs/architecture.svg" alt="Ownsei 架構：語音區段偵測、日文轉錄、上下文翻譯與字幕匯出" width="900"></a>
 </p>
 
-[英文架構圖](docs/architecture.en.svg)
-
 ## 特色
 
 - **中日雙語字幕**　每句日文與對應的中文譯文共用時間軸，可直接匯出雙語字幕，也可單獨輸出日文或中文。
@@ -105,6 +103,10 @@ Ownsei SFT48 是我用日語音聲台詞與人工中文字幕微調的 Index-Tra
 
 <p align="center">
   <a href="docs/screenshots/bilingual-player.webp"><img src="docs/screenshots/bilingual-player.webp" alt="雙語播放器" width="900"></a>
+</p>
+
+<p align="center">
+  <a href="docs/screenshots/backend-console.webp"><img src="docs/screenshots/backend-console.webp" alt="Ownsei 後端啟動視窗，顯示工作區與本機服務網址" width="900"></a>
 </p>
 
 ## 開發

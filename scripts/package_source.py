@@ -20,6 +20,7 @@ ROOT_FILES = (
     "docs/architecture.en.svg",
     "docs/screenshots/batch-progress.webp",
     "docs/screenshots/bilingual-player.webp",
+    "docs/screenshots/backend-console.webp",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     ".gitignore",
