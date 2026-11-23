@@ -3,6 +3,7 @@ import { Icon } from "./Icon";
 import type { Project } from "./api";
 
 type SidebarProps = {
+  version: string;
   projects: Project[];
   pid: string;
   theme: string;
@@ -16,6 +17,7 @@ type SidebarProps = {
   onDialog: (value: string) => void;
 };
 export function Sidebar({
+  version,
   projects,
   pid,
   theme,
@@ -36,7 +38,18 @@ export function Sidebar({
           src={theme === "mocha" ? "/ownsei-logo-dark.png" : "/ownsei-logo.png"}
           alt=""
         />
-        <b>Ownsei</b>
+        <div className="brand-name">
+          <b>Ownsei</b>
+          <button
+            className="brand-version"
+            type="button"
+            aria-haspopup="dialog"
+            aria-label={`v${version} · ${ui("關於 Ownsei")}`}
+            onClick={() => onDialog("about")}
+          >
+            v{version}
+          </button>
+        </div>
         <button
           className="help-button"
           aria-label={ui("快捷鍵說明")}

@@ -52,6 +52,8 @@ import { CueEditor } from "./CueEditor";
 import { useJobs } from "./useJobs";
 import { liveJob } from "./jobState";
 import { editRequest, dirtyDraft } from "./editorContract";
+declare const __OWNSEI_VERSION__: string;
+
 const time = (ms: number) =>
   `${Math.floor(ms / 60000)
     .toString()
@@ -643,6 +645,7 @@ function App() {
   return (
     <div className={"app" + (track ? " has-player" : "")}>
       <Sidebar
+        version={__OWNSEI_VERSION__}
         projects={projects}
         pid={pid}
         theme={theme}
@@ -1295,6 +1298,19 @@ function App() {
                 {f}
               </a>
             ))}
+          </div>
+        </Modal>
+      ) : dialog === "about" ? (
+        <Modal title={ui("關於 Ownsei")} onClose={() => setDialog("")} className="about-dialog">
+          <div>
+            <b>Ownsei v{__OWNSEI_VERSION__}</b>
+            <p>{ui("在本機將日語音聲轉錄為日文逐字稿，翻譯成中文字幕，並依原音校對與匯出。")}</p>
+          </div>
+          <div className="manager-actions">
+            <button type="button" disabled>{ui("檢查更新（尚未開放）")}</button>
+            <a href="https://github.com/ribeye0/ownsei/releases/latest" target="_blank" rel="noopener noreferrer">
+              GitHub Releases <span aria-hidden="true">↗</span>
+            </a>
           </div>
         </Modal>
       ) : dialog === "shortcuts" ? (
