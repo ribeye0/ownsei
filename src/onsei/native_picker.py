@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import sys
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ from onsei.audio import FORMATS
 from onsei.util import ROOT
 
 _dialog = threading.Lock()
+_log = logging.getLogger(__name__)
 
 
 def choose_path(kind: Literal["file", "directory"], initial: str = "") -> str | None:
@@ -77,27 +79,37 @@ def choose_windows_path(kind, initial):
     if not _dialog.acquire(blocking=False):
         raise ValueError("檔案選擇器已開啟，請先完成或取消目前的選擇。")
     try:
+        args = [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-STA",
+            "-File",
+            str(ROOT / "scripts/choose_path.ps1"),
+            "-Kind",
+            kind,
+        ]
+        # Windows PowerShell -File does not reliably bind empty native arguments.
+        # Let the script choose the user's home directory when no path is entered.
+        if initial:
+            args += ["-Initial", initial]
         result = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-STA",
-                "-File",
-                str(ROOT / "scripts/choose_path.ps1"),
-                "-Kind",
-                kind,
-                "-Initial",
-                initial,
-            ],
+            args,
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
         if result.returncode != 0:
-            raise ValueError("無法開啟 Windows 檔案選擇器，也可直接輸入路徑。")
+            detail = result.stderr.strip()[:2000]
+            _log.warning("Windows file picker exited %s: %s", result.returncode, detail)
+            raise ValueError(
+                f"無法開啟 Windows 檔案選擇器（結束碼 {result.returncode}），也可直接輸入路徑。"
+                + (f"\n{detail}" if detail else "")
+            )
         value = result.stdout.removesuffix("\n").removesuffix("\r")
         if not value:
             return None
@@ -109,7 +121,13 @@ def choose_windows_path(kind, initial):
         if kind == "file" and (not path.is_file() or path.suffix.lower() not in FORMATS):
             raise ValueError("請選擇支援的音訊檔案。")
         return str(path)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise ValueError("無法完成 Windows 檔案選擇，請重新開啟或直接輸入路徑。") from error
+    except FileNotFoundError as error:
+        raise ValueError(
+            "找不到 Windows PowerShell（powershell.exe），請確認已安裝，或直接輸入路徑。"
+        ) from error
+    except OSError as error:
+        raise ValueError(f"無法啟動 Windows 檔案選擇器：{error}。也可直接輸入路徑。") from error
+    except subprocess.TimeoutExpired as error:
+        raise ValueError("檔案選擇已逾時，請重新開啟或直接輸入路徑。") from error
     finally:
         _dialog.release()

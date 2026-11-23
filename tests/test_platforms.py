@@ -73,10 +73,50 @@ def test_windows_dialog_uses_literal_arguments_and_preserves_filename(tmp_path, 
     )
     assert native_picker.choose_path("directory") is None
     monkeypatch.setattr(
-        native_picker.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=2, stdout="")
+        native_picker.subprocess,
+        "run",
+        lambda *a, **k: SimpleNamespace(returncode=2, stdout="", stderr="picker failed"),
     )
     with pytest.raises(ValueError, match="Windows"):
         native_picker.choose_path("directory")
+    assert native_picker._dialog.acquire(blocking=False)
+    native_picker._dialog.release()
+
+
+def test_windows_dialog_omits_empty_initial_argument_and_reports_error(monkeypatch, caplog):
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=1, stdout="", stderr="WinForms unavailable\n" + "x" * 3000)
+
+    monkeypatch.setattr(native_picker.subprocess, "run", run)
+    with pytest.raises(ValueError, match="WinForms unavailable") as failure:
+        native_picker.choose_windows_path("file", "")
+    args, kwargs = calls[0]
+    assert "-Initial" not in args
+    assert "-STA" in args
+    assert kwargs["errors"] == "replace"
+    assert len(str(failure.value)) < 2100
+    assert "exited 1" in caplog.text
+    assert native_picker._dialog.acquire(blocking=False)
+    native_picker._dialog.release()
+
+
+@pytest.mark.parametrize(
+    "failure, message",
+    [
+        (FileNotFoundError("missing"), "powershell.exe"),
+        (native_picker.subprocess.TimeoutExpired("powershell.exe", 300), "逾時"),
+    ],
+)
+def test_windows_dialog_launch_failure_releases_lock(monkeypatch, failure, message):
+    def run(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(native_picker.subprocess, "run", run)
+    with pytest.raises(ValueError, match=message):
+        native_picker.choose_windows_path("file", "")
     assert native_picker._dialog.acquire(blocking=False)
     native_picker._dialog.release()
 
