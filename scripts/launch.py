@@ -20,6 +20,10 @@ def select_port(requested=None):
     candidates = [requested] if requested is not None else [*range(DEFAULT_PORT, min(DEFAULT_PORT + 20, 65536)), 0]
     for port in candidates:
         with socket.socket() as probe:
+            if sys.platform != "win32":
+                # Match asyncio's POSIX listener: recently closed connections
+                # must not prevent restarting a server on the same port.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 probe.bind(("127.0.0.1", port))
             except OSError as error:

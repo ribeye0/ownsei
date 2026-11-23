@@ -3,6 +3,7 @@
 import importlib
 from pathlib import Path
 import socket
+import sys
 
 import pytest
 
@@ -37,4 +38,18 @@ def test_explicit_available_port_is_preserved(launcher):
     with socket.socket() as available:
         available.bind(("127.0.0.1", 0))
         port = available.getsockname()[1]
+    assert launcher.select_port(port) == port
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX listener reuse")
+def test_recently_closed_http_connection_does_not_block_restart(launcher):
+    with socket.socket() as server, socket.socket() as client:
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen()
+        client.connect(("127.0.0.1", port))
+        connection, _ = server.accept()
+        connection.close()
+        assert client.recv(1) == b""
     assert launcher.select_port(port) == port
