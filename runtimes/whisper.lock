@@ -38,11 +38,9 @@ numpy==2.5.3
     # via
     #   ctranslate2
     #   onnxruntime
-nvidia-cublas-cu12==12.8.4.1
     # via
     #   -r runtimes/whisper.in
     #   nvidia-cudnn-cu12
-nvidia-cudnn-cu12==9.10.2.21
     # via -r runtimes/whisper.in
 onnxruntime==1.31.0
     # via faster-whisper

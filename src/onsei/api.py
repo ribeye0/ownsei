@@ -8,14 +8,16 @@ import uuid
 from filelock import Timeout as LockTimeout
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from onsei.models import ASR_MODELS, DEFAULT_REVIEW, DEFAULT_TRANSLATION, GGUF
+from onsei.api_system import router as system_router
+from onsei.models import ASR_MODELS, DEFAULT_ASR, DEFAULT_TRANSLATION, TRANSLATION_MODELS
 from onsei.audio import import_audio
 from onsei.importjobs import latest_import, read_import, start_import
 from onsei.export import export_track
@@ -25,7 +27,12 @@ from onsei.snapshots import fresh_exports
 from onsei.view import track_view
 from onsei.util import ROOT
 from onsei.joblogs import read_log, stream_log
-from onsei.preferences import translation_preferences, DEFAULT_STYLES, updated_preferences, pin_translation_settings
+from onsei.preferences import (
+    translation_preferences,
+    DEFAULT_STYLES,
+    updated_preferences,
+    pin_translation_settings,
+)
 from onsei.terminology import normalize_entries, enabled_terms
 from onsei.global_preferences import load_global, save_global
 
@@ -58,7 +65,7 @@ def registered_project(db, project_id: str, include_trash=False) -> Store:
     if not row:
         raise HTTPException(404, "Unknown project")
     if row[1] is not None and not include_trash:
-        raise HTTPException(410, "作品已刪除，請先從垃圾桶還原。")
+        raise HTTPException(410, "專案已刪除，請先從垃圾桶還原。")
     return Store(row[0])
 
 
@@ -67,53 +74,7 @@ def project(project_id: str) -> Store:
         return registered_project(db, project_id)
 
 
-@app.get("/api/system")
-def system_status():
-    from onsei.environment import inspect_environment
-    return inspect_environment()
-
-
-@app.get("/api/models")
-def model_catalog():
-    from onsei.modelmanager import catalog
-    return catalog()
-
-
-class ModelDownloads(BaseModel):
-    models: list[str]
-
-
-@app.post("/api/models/download")
-def model_download(body: ModelDownloads):
-    from onsei.modelmanager import start_download
-    return start_download(body.models)
-
-
-@app.get("/api/models/{name}/log")
-def model_download_log(name: str):
-    from onsei.modelmanager import job_log
-    return {"text": job_log(name)}
-
-
-@app.get("/api/models/{name}/log/download")
-def model_full_log(name: str):
-    from onsei.modelmanager import log_path
-    path = log_path(name)
-    if path is None:
-        raise HTTPException(404, "模型紀錄不存在")
-    return FileResponse(path, filename=f"{name}-{path.stem[:8]}.log", media_type="text/plain")
-
-
-@app.post("/api/models/{name}/cancel")
-def model_download_cancel(name: str):
-    from onsei.modelmanager import cancel_download
-    return cancel_download(name)
-
-
-@app.delete("/api/models/{name}")
-def model_delete(name: str):
-    from onsei.modelmanager import delete_model
-    return delete_model(name)
+app.include_router(system_router)
 
 
 @app.middleware("http")
@@ -144,6 +105,7 @@ async def local_origin(request: Request, call_next):
 class CreateProject(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     path: str | None = None
+    copy_from: str | None = None
     target_language: str = "zh-Hant"
 
     @field_validator("target_language")
@@ -157,7 +119,7 @@ class CreateProject(BaseModel):
     def nonempty_title(cls, value):
         value = value.strip()
         if not value:
-            raise ValueError("作品標題不可空白")
+            raise ValueError("專案標題不可空白")
         return value
 
 
@@ -190,16 +152,23 @@ def projects(trashed: bool = False):
 @app.post("/api/projects")
 def create_project(body: CreateProject):
     identity = uuid.uuid4().hex[:12]
+    if body.path and body.copy_from:
+        raise ValueError("不能同時指定既有目錄與複製來源")
     path = Path(body.path).resolve() if body.path else ROOT / "workspace" / identity
     existing_data = (path / "project.db").exists()
-    s = Store(path) if existing_data else Store.create(path, body.title)
-    if not existing_data:
-        s.update_settings(updated_preferences(s.settings(), {"target_language": body.target_language}))
+    if body.copy_from:
+        from onsei.project_copy import copy_project
+
+        s = copy_project(Path(body.copy_from), path)
+    else:
+        s = Store(path) if existing_data else Store.create(path, body.title)
+        if not existing_data:
+            s.update_settings(updated_preferences(s.settings(), {"target_language": body.target_language}))
     with registry() as db:
         existing = db.execute("SELECT id,trashed_at FROM projects WHERE path=?", (str(s.path),)).fetchone()
         if existing:
             if existing[1] is not None:
-                raise HTTPException(409, "這個作品已在垃圾桶，請使用還原功能。")
+                raise HTTPException(409, "這個專案已在垃圾桶，請使用還原功能。")
             return {"id": existing[0]}
         db.execute("INSERT INTO projects(id,path) VALUES (?,?)", (identity, str(s.path)))
     return {"id": identity}
@@ -219,9 +188,9 @@ def trash_project(p: str):
             )
         importing = latest_import(s)
         if importing and importing["status"] == "running":
-            raise HTTPException(409, "作品仍在匯入音檔，請等待完成再刪除。")
+            raise HTTPException(409, "專案仍在匯入音檔，請等待完成再刪除。")
         if active:
-            raise HTTPException(409, "作品仍有排隊或執行中的任務，請先取消或等待完成再刪除。")
+            raise HTTPException(409, "專案仍有排隊或執行中的任務，請先取消或等待完成再刪除。")
         db.execute("UPDATE projects SET trashed_at=COALESCE(trashed_at,?) WHERE id=?", (time.time(), p))
     return {"ok": True}
 
@@ -238,8 +207,15 @@ def restore_project(p: str):
 @app.get("/api/preferences/defaults")
 def preference_defaults():
     from onsei.translation_policy import DEFAULT_GLOSSARY
-    return {"translation_style": DEFAULT_STYLES["zh-Hant"], "translation_styles": DEFAULT_STYLES,
-            "target_language": "zh-Hant", "glossary_entries": normalize_entries(DEFAULT_GLOSSARY)}
+
+    return {
+        "asr": DEFAULT_ASR,
+        "translation": DEFAULT_TRANSLATION,
+        "translation_style": DEFAULT_STYLES["zh-Hant"],
+        "translation_styles": DEFAULT_STYLES,
+        "target_language": "zh-Hant",
+        "glossary_entries": normalize_entries(DEFAULT_GLOSSARY),
+    }
 
 
 @app.get("/api/preferences/global")
@@ -257,9 +233,26 @@ def update_global_preferences(body: GlobalPreferencesRequest):
     return save_global(body.glossary_entries, body.revision, ROOT / "workspace/global-preferences.json")
 
 
+class NativePickerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["file", "directory"]
+    initial: str = Field(default="", max_length=4096)
+
+
+@app.post("/api/native-picker")
+def native_picker(body: NativePickerRequest):
+    from onsei.native_picker import choose_path
+
+    try:
+        return {"path": choose_path(body.kind, body.initial)}
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
 @app.get("/api/local-files")
 def local_files(path: str | None = None):
     from onsei.localfiles import browse_audio
+
     try:
         return browse_audio(path)
     except OSError as error:
@@ -269,6 +262,7 @@ def local_files(path: str | None = None):
 @app.get("/api/projects/{p}/purge")
 def purge_scope(p: str):
     from onsei.localfiles import removal_scope
+
     with registry() as db:
         s = registered_project(db, p, include_trash=True)
         scope = removal_scope(s, p, ROOT / "workspace")
@@ -278,16 +272,17 @@ def purge_scope(p: str):
 @app.delete("/api/projects/{p}/purge")
 def purge_project(p: str):
     from onsei.localfiles import removal_scope, remove_workspace
+
     with registry() as db:
         db.execute("BEGIN IMMEDIATE")
         row = db.execute("SELECT trashed_at FROM projects WHERE id=?", (p,)).fetchone()
         if not row or row[0] is None:
-            raise HTTPException(409, "只能永久刪除垃圾桶內的作品")
+            raise HTTPException(409, "只能永久刪除垃圾桶內的專案")
         s = registered_project(db, p, include_trash=True)
         recover(s)
         importing = latest_import(s)
         if s.active_jobs() or (importing and importing["status"] == "running"):
-            raise HTTPException(409, "作品仍有活動任務，請等待或取消後再刪除")
+            raise HTTPException(409, "專案仍有活動任務，請等待或取消後再刪除")
         scope = removal_scope(s, p, ROOT / "workspace")
         if scope == "workspace":
             try:
@@ -329,8 +324,11 @@ def details(p: str):
     s = project(p)
     value = s.settings()
     return {
-        "settings": {**value, **updated_preferences(value, {}),
-                     "glossary_entries": normalize_entries(value.get("glossary_entries", value.get("glossary", {})))},
+        "settings": {
+            **value,
+            **updated_preferences(value, {}),
+            "glossary_entries": normalize_entries(value.get("glossary_entries", value.get("glossary", {}))),
+        },
         "tracks": [t.model_dump() for t in s.tracks()],
         "jobs": job_snapshot(s),
         "path": str(s.path),
@@ -339,7 +337,15 @@ def details(p: str):
 
 @app.patch("/api/projects/{p}/settings")
 def settings(p: str, body: dict):
-    if set(body) - {"title", "notes", "glossary", "glossary_entries", "translation_style", "translation_styles", "target_language"}:
+    if set(body) - {
+        "title",
+        "notes",
+        "glossary",
+        "glossary_entries",
+        "translation_style",
+        "translation_styles",
+        "target_language",
+    }:
         raise HTTPException(422, "Unsupported setting")
     if "notes" in body and not isinstance(body["notes"], str):
         raise HTTPException(422, "Notes must be a string")
@@ -347,7 +353,7 @@ def settings(p: str, body: dict):
         try:
             body["title"] = CreateProject(title=body["title"]).title
         except ValueError as e:
-            raise HTTPException(422, "作品標題須為 1–200 字，且不可空白。") from e
+            raise HTTPException(422, "專案標題須為 1–200 字，且不可空白。") from e
     if "glossary" in body and (
         not isinstance(body["glossary"], dict)
         or any(not isinstance(k, str) or not isinstance(v, str) for k, v in body["glossary"].items())
@@ -422,9 +428,10 @@ def job_snapshot(s: Store):
     for job in sorted(jobs.values(), key=lambda j: j["created_at"], reverse=True):
         options = dict(job.get("options", {}))
         snapshots = options.pop("input_snapshots", {})
-        options["input_fingerprints"] = {track: {k: snapshot.get(k) for k in
-                                               ("version", "result_id", "source_key", "translation_key")}
-                                         for track, snapshot in snapshots.items()}
+        options["input_fingerprints"] = {
+            track: {k: snapshot.get(k) for k in ("version", "result_id", "source_key", "translation_key")}
+            for track, snapshot in snapshots.items()
+        }
         result.append({**job, "options": options})
     return result
 
@@ -477,7 +484,7 @@ def idle_project(p):
                 for r in data.execute("SELECT payload FROM jobs")
             )
         if active:
-            raise HTTPException(409, "請先取消或等待作品的任務完成，再切換或刪除版本。")
+            raise HTTPException(409, "請先取消或等待專案的任務完成，再切換或刪除版本。")
         yield s
 
 
@@ -508,34 +515,55 @@ def delete_translation(p: str, t: str, v: str):
     return {"ok": True}
 
 
+class TranslationOptionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    context: Literal[8192, 16384, 32768, 65536, 98304, 131072, 262144] | None = None
+    names: bool | None = None
+    history: bool | None = None
+
+
 class JobRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     action: str = "run"
-    asr: str = "whisper-ja-760m"
+    asr: str = DEFAULT_ASR
     translation: str = DEFAULT_TRANSLATION
     track_ids: list[str] | None = None
     cue_ids: list[str] | None = None
-    extra_alignment: bool = False
-    after_review: bool = False
-    use_reference: bool = False
-    review_model: str = DEFAULT_REVIEW
     target_language: str | None = None
     translation_style: str | None = None
     continue_on_error: bool = False
     fresh_asr: bool = False
+    translation_options: TranslationOptionsRequest | None = None
     transcript_versions: dict[str, str] | None = None
+    asr_filter: dict | None = None
+    execution: dict | None = None
 
 
 @app.post("/api/projects/{p}/jobs")
 def new_job(p: str, body: JobRequest):
-    if body.action not in ("run", "transcribe", "translate", "review", "realign", "export"):
+    if body.action not in ("run", "transcribe", "translate", "export"):
         raise HTTPException(422, "Unknown action")
-    if body.asr not in ASR_MODELS or body.translation not in GGUF:
+    if body.asr not in ASR_MODELS or body.translation not in TRANSLATION_MODELS:
         raise HTTPException(422, "Unknown model")
-    if body.review_model not in GGUF:
-        raise HTTPException(422, "Unknown review model")
-    if (body.action == "review" or body.after_review) and body.cue_ids:
-        raise HTTPException(422, "全文審校不接受局部句段，請清除選取限制")
     options = body.model_dump(exclude={"action"})
+    from onsei.backend import normalize_execution
+
+    try:
+        options["execution"] = normalize_execution(body.execution)
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+    if body.asr_filter is not None:
+        from onsei.asr_filter import normalize_filter
+
+        try:
+            normalized = normalize_filter(body.asr_filter)
+            if normalized["enabled"] and not body.asr.startswith("haas-ja-v1.0"):
+                raise ValueError("台詞篩選目前僅支援 Haas")
+        except ValueError as error:
+            raise HTTPException(422, str(error))
+        options["asr_filter"] = {k: v for k, v in normalized.items() if k != "pipeline"}
+    if body.translation_options is not None:
+        options["translation_options"] = body.translation_options.model_dump(exclude_none=True)
     with registry() as db:
         db.execute("BEGIN IMMEDIATE")
         s = registered_project(db, p)
@@ -545,14 +573,20 @@ def new_job(p: str, body: JobRequest):
             raise HTTPException(422, "Unknown track")
         selected_tracks = body.track_ids or [t.id for t in s.tracks()]
         if not selected_tracks:
-            raise HTTPException(422, "作品沒有可處理的音軌")
-        overrides = {k: options.pop(k) for k in ("target_language", "translation_style") if options.get(k) is not None}
+            raise HTTPException(422, "專案沒有可處理的音軌")
+        overrides = {
+            k: options.pop(k) for k in ("target_language", "translation_style") if options.get(k) is not None
+        }
         options.pop("target_language", None)
         options.pop("translation_style", None)
-        options["translation_settings"] = pin_translation_settings(
-            {**s.settings(), **updated_preferences(s.settings(), overrides)},
-            load_global(ROOT / "workspace/global-preferences.json")["glossary_entries"]
-        ) if body.action in ("run", "translate", "review") else translation_preferences(s.settings())
+        options["translation_settings"] = (
+            pin_translation_settings(
+                {**s.settings(), **updated_preferences(s.settings(), overrides)},
+                load_global(ROOT / "workspace/global-preferences.json")["glossary_entries"],
+            )
+            if body.action in ("run", "translate")
+            else translation_preferences(s.settings())
+        )
         if body.transcript_versions is None:
             options.pop("transcript_versions", None)
         else:
@@ -561,32 +595,13 @@ def new_job(p: str, body: JobRequest):
             for track_id, version in body.transcript_versions.items():
                 if not s.cues(track_id, version):
                     raise HTTPException(422, "所選轉錄不存在，請重新選擇來源")
-        if body.action in ("translate", "review") and any(
+        if body.action in ("translate",) and any(
             not s.cues(t, (body.transcript_versions or {}).get(t)) for t in selected_tracks
         ):
             raise HTTPException(422, "所選音軌尚無逐字稿，請先轉錄")
         job = s.new_job(body.action, options)
         start_job(s, job["id"])
     return job
-
-
-@app.get("/api/projects/{p}/tracks/{t}/translations/{identity}/review")
-def review_details(p: str, t: str, identity: str):
-    s = project(p)
-    with s.db() as db:
-        if not db.execute("SELECT 1 FROM translation_versions WHERE id=? AND track_id=?", (identity, t)).fetchone():
-            raise HTTPException(404, "Unknown translation result")
-        metadata = s.run_metadata(identity, db)
-        records = metadata.get("patches", []) + metadata.get("issues", []) + metadata.get("reference", [])
-        referenced = {i for row in records for i in row.get("evidence_ids", [])}
-        referenced.update(row["id"] for row in records if "id" in row)
-        from onsei.domain import Cue
-        evidence = {}
-        for raw in metadata.get("source_snapshot", {}).get("cues", []):
-            if raw["id"] in referenced:
-                cue = Cue.model_validate(raw)
-                evidence[cue.id] = {"ordinal": cue.ordinal, "ja": cue.ja, "zh": cue.zh}
-        return {**{k: v for k, v in metadata.items() if k != "source_snapshot"}, "evidence": evidence}
 
 
 @app.post("/api/projects/{p}/jobs/{j}/cancel")
@@ -686,6 +701,7 @@ def download(p: str, filename: str):
     # identifiers; downloaded attachments use the original audio basename too.
     from onsei.snapshots import result_exports
     from onsei.delivery import audio_stem
+
     download_name = target.name
     with s.db() as db:
         db.execute("BEGIN")
@@ -728,14 +744,23 @@ class DeliveryRequest(BaseModel):
 @app.post("/api/projects/{p}/deliveries")
 def delivery(p: str, body: DeliveryRequest):
     from onsei.delivery import prepare_delivery
-    return prepare_delivery(project(p), [v.model_dump() for v in body.selections], body.languages, body.formats,
-                            body.chinese, language_tag=body.language_tag, destination=body.destination,
-                            overwrite=body.overwrite)
+
+    return prepare_delivery(
+        project(p),
+        [v.model_dump() for v in body.selections],
+        body.languages,
+        body.formats,
+        body.chinese,
+        language_tag=body.language_tag,
+        destination=body.destination,
+        overwrite=body.overwrite,
+    )
 
 
 @app.get("/api/projects/{p}/deliveries/{identity}")
 def download_delivery(p: str, identity: str):
     from onsei.delivery import delivery_download
+
     try:
         path, filename = delivery_download(project(p), identity)
     except FileNotFoundError as error:
@@ -746,6 +771,7 @@ def download_delivery(p: str, identity: str):
 @app.get("/api/projects/{p}/deliveries/{identity}/files/{index}")
 def download_delivery_file(p: str, identity: str, index: int):
     from onsei.delivery import delivery_file
+
     try:
         path, filename = delivery_file(project(p), identity, index)
     except FileNotFoundError as error:
@@ -764,6 +790,7 @@ class LocationRequest(BaseModel):
 @app.post("/api/locations/compact")
 def compact_report(body: LocationRequest):
     from onsei.locations import compact_location
+
     with registry() as db:
         projects = [r[0] for r in db.execute("SELECT id FROM projects")]
         s = registered_project(db, body.project)
@@ -773,6 +800,7 @@ def compact_report(body: LocationRequest):
 @app.get("/api/locations/resolve")
 def resolve_report(code: str):
     from onsei.locations import resolve_location
+
     with registry() as db:
         projects = [r[0] for r in db.execute("SELECT id FROM projects")]
         return resolve_location(code, projects, lambda p: registered_project(db, p, include_trash=True))

@@ -57,7 +57,7 @@ def start_import(store: Store, source: Path) -> dict:
     with _guard, FileLock(store.path / ".import-submit.lock"):
         previous = latest_import(store)
         if previous and previous["status"] == "running":
-            raise ValueError("作品已有匯入任務正在執行。")
+            raise ValueError("專案已有匯入任務正在執行。")
         identity = uuid.uuid4().hex
         path = store.path / "imports" / f"{identity}.json"
         state = {
@@ -77,6 +77,7 @@ def start_import(store: Store, source: Path) -> dict:
             "added": 0,
             "skipped": 0,
             "cached": 0,
+            "variants_skipped": 0,
             "current_file": "",
             "error": None,
         }

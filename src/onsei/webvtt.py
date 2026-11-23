@@ -47,7 +47,7 @@ class VttCue:
         for name in speaker_names:
             match = re.match(re.escape(name) + r"[：:][ \t]*", text)
             if match:
-                text, speaker = text[match.end():], name
+                text, speaker = text[match.end() :], name
                 break
         return text, speaker
 
@@ -81,8 +81,9 @@ def parse_vtt(content: str) -> VttDocument:
         if end <= start or start < previous_start:
             raise ValueError("WebVTT cues need increasing start times and positive intervals")
         previous_start = start
-        document.cues.append(VttCue(start, end, "\n".join(lines[offset + 1:]),
-                                     lines[0] if offset else None, match[3] or ""))
+        document.cues.append(
+            VttCue(start, end, "\n".join(lines[offset + 1 :]), lines[0] if offset else None, match[3] or "")
+        )
     return document
 
 

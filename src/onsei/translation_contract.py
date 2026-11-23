@@ -5,6 +5,9 @@ import re
 
 BATCH_SIZE = 24
 CONTEXT_CUES = 6
+# A conservative output-size hint, not a tokenizer. Native token-budget checks
+# remain authoritative. Keep every sub-batch inside its original dependency grid.
+MAX_SOURCE_CHARS = 650
 
 
 def dependency_window(ordinal: int) -> tuple[int, int]:
@@ -68,15 +71,25 @@ def output_grammar(
 def split_point(batch):
     middle = len(batch) // 2
     candidates = range(max(1, middle - 3), min(len(batch), middle + 4))
-    return max(candidates, key=lambda i: (batch[i].start_ms - batch[i-1].end_ms, -abs(i-middle)))
+    return max(candidates, key=lambda i: (batch[i].start_ms - batch[i - 1].end_ms, -abs(i - middle)))
 
 
 def natural_batches(cues):
     # Preserve the established 24-cue dependency grid; use pauses inside it when useful.
     batches = []
     for start in range(0, len(cues), BATCH_SIZE):
-        block = cues[start:start+BATCH_SIZE]
-        cut = next((i for i in range(12, len(block)-5)
-                    if block[i].start_ms-block[i-1].end_ms >= 2200), None)
-        batches.extend([block[:cut], block[cut:]] if cut else [block])
+        block = cues[start : start + BATCH_SIZE]
+        cut = next(
+            (i for i in range(12, len(block) - 5) if block[i].start_ms - block[i - 1].end_ms >= 2200), None
+        )
+        for section in [block[:cut], block[cut:]] if cut else [block]:
+            current, characters = [], 0
+            for cue in section:
+                if current and characters + len(cue.ja) > MAX_SOURCE_CHARS:
+                    batches.append(current)
+                    current, characters = [], 0
+                current.append(cue)
+                characters += len(cue.ja)
+            if current:
+                batches.append(current)
     return batches

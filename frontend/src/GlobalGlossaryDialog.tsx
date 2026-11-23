@@ -26,7 +26,7 @@ export function GlobalGlossaryDialog({defaults, onClose}: {defaults: TermEntry[]
     }
     return <Modal title={ui("全局術語表")} onClose={onClose} busy={busy} className="glossary-dialog">
       {loaded ? <GlossaryEditor value={value} onChange={setValue} scope="global" disabled={busy}/> : <p>{busy ? ui("讀取設定中…") : ui("尚未載入設定")}</p>}
-      <p>{ui("儲存後只用於新提交的翻譯任務；正在執行及續跑的任務、既有譯文不受影響。作品同名術語優先。")}</p>
+      <p>{ui("儲存後只用於新提交的翻譯任務；正在執行及續跑的任務、既有譯文不受影響。專案同名術語優先。")}</p>
       {error && <p className="error" role="alert">{ui(error.replace(/^Error: /,""))}</p>}
       <div className="manager-actions">
         <button disabled={busy} onClick={() => void load()}>{loaded ? ui("重新載入（捨棄此草稿）") : ui("重新載入")}</button>

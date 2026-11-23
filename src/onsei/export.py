@@ -15,15 +15,19 @@ from onsei.translation_contract import polluted
 from onsei.webvtt import VttCue, write_vtt
 
 
-def export_track(store: Store, track_id: str, directory: Path, japanese_only=False, *, version=None, result_id=None) -> list[Path]:
+def export_track(
+    store: Store, track_id: str, directory: Path, japanese_only=False, *, version=None, result_id=None
+) -> list[Path]:
     directory.mkdir(parents=True, exist_ok=True)
     with FileLock(store.path / f".export-{track_id}.lock", timeout=30):
         store.ensure_legacy_result(track_id)
+
         def read(db=None):
             if version is None and result_id is None:
                 return store.read_result(db, track_id) if db is not None else store.result(track_id)
             from onsei.domain import Cue, Track
             from onsei.storage import read_cue
+
             snapshot = store.input_snapshot(track_id, version, result_id, db)
             track = Track.model_validate({**snapshot["track"], "active_version": snapshot["version"]})
             return track, [read_cue(Cue.model_validate(c).model_dump_json()) for c in snapshot["cues"]]
@@ -31,8 +35,10 @@ def export_track(store: Store, track_id: str, directory: Path, japanese_only=Fal
         track, cues = read()
         identity = cues[0].provenance.get("translation_version") if cues else None
         metadata = store.run_metadata(identity) if identity else {}
-        if not japanese_only and (metadata.get("status") == "stale" or
-                                 (metadata.get("stage") == "review" and metadata.get("status") != "completed")):
+        if not japanese_only and (
+            metadata.get("status") == "stale"
+            or (metadata.get("stage") == "review" and metadata.get("status") != "completed")
+        ):
             raise ValueError("來源待更新或全文審校尚未完成；請先完成有效結果再匯出中文")
         failure = None
         with TemporaryDirectory(prefix=".export-", dir=directory) as work:
@@ -50,8 +56,11 @@ def export_track(store: Store, track_id: str, directory: Path, japanese_only=Fal
                         or export_key(track_id, current) != export_key(track_id, cues)
                         or cue_digest(current) != cue_digest(cues)
                         or (not japanese_only and current_metadata.get("status") == "stale")
-                        or (not japanese_only and current_metadata.get("stage") == "review"
-                            and current_metadata.get("status") != "completed")
+                        or (
+                            not japanese_only
+                            and current_metadata.get("stage") == "review"
+                            and current_metadata.get("status") != "completed"
+                        )
                     ):
                         raise ConflictError("匯出期間結果已更新，請重新匯出目前結果。")
                     # Hide the old manifest before replacing any files. If publishing
@@ -96,8 +105,14 @@ def _render(track, cues, directory: Path, japanese_only):
         ),
     )
     save("ja.txt", "\n".join(c.ja for c in cues) + "\n")
+    # Legacy ASR versions can contain punctuation-only rows. Retain them in the
+    # audit, while omitting empty rendered rows from timed subtitle formats.
+    visible = [c for c in cues if c.ja.strip() or (not japanese_only and c.zh and c.zh.strip())]
+    if not visible:
+        raise ValueError("No visible subtitle text; raw transcript/JSONL saved")
     good_time = all(
-        c.timing_status not in ("stale", "alignment_failed") and c.end_ms <= track.duration_ms for c in cues
+        c.timing_status not in ("stale", "alignment_failed") and c.end_ms <= track.duration_ms
+        for c in visible
     )
     languages = ["ja"]
     failure = None
@@ -110,41 +125,55 @@ def _render(track, cues, directory: Path, japanese_only):
             or (c.zh_override is None and polluted(c.zh_auto))
         ]
         if missing:
-            failure = ValueError(f"{len(missing)} translations missing/stale. Japanese/JSONL saved; complete translation first.")
+            failure = ValueError(
+                f"{len(missing)} translations missing/stale. Japanese/JSONL saved; complete translation first."
+            )
         else:
             save("bilingual.txt", "\n\n".join(f"{c.ja}\n{c.zh}" for c in cues) + "\n")
             target = cues[0].provenance.get("translation", {}).get("target_language", "zh-Hant")
-            save(("zh-Hans" if target == "zh-Hans" else "zh-TW") + ".txt", "\n".join(c.zh for c in cues) + "\n")
-            save("bilingual.md", f"# {track.name}\n\n" + "\n\n".join(f"{c.ja}\n\n{c.zh}" for c in cues) + "\n")
-            if good_time:
-                save(
-                    "bilingual-timed.md",
-                    f"# {track.name}\n\n"
-                    + "\n\n".join(
-                        f"[{pysubs2.time.ms_to_str(c.start_ms)} → {pysubs2.time.ms_to_str(c.end_ms)}]\n\n{c.ja}\n\n{c.zh}"
-                        for c in cues
-                    )
-                    + "\n",
-                )
+            save(
+                ("zh-Hans" if target == "zh-Hans" else "zh-TW") + ".txt", "\n".join(c.zh for c in cues) + "\n"
+            )
             target = cues[0].provenance.get("translation", {}).get("target_language", "zh-Hant")
             languages += ["zh-Hans" if target == "zh-Hans" else "zh-TW", "bilingual"]
     if not good_time:
         raise ValueError(
-            "Transcript saved. Subtitle export blocked by stale/failed alignment; realign first."
+            "Transcript saved. Subtitle timing needs review; listen and correct the timestamps before exporting."
         )
     for language in languages:
         subs = pysubs2.SSAFile()
         vtt = []
         subs.styles["Default"].fontname = "Noto Sans CJK TC"
         subs.styles["Default"].fontsize = 24
-        for c in cues:
-            text = c.ja if language == "ja" else c.zh if language in ("zh-TW", "zh-Hans") else f"{c.ja}\n{c.zh}"
+        for c in visible:
+            text = (
+                c.ja
+                if language == "ja"
+                else c.zh
+                if language in ("zh-TW", "zh-Hans")
+                else "\n".join(t for t in (c.ja, c.zh) if t and t.strip())
+            )
+            if not text or not text.strip():
+                continue
             vtt.append(VttCue(c.start_ms, c.end_ms, text, c.id))
             subs.append(pysubs2.SSAEvent(start=c.start_ms, end=c.end_ms, text=text.replace("\n", "\\N")))
         save(f"{language}.srt", subs.to_string("srt"))
         save(f"{language}.vtt", write_vtt(vtt))
-        if language == "bilingual":
-            save("bilingual.ass", subs.to_string("ass"))
+        save(f"{language}.ass", subs.to_string("ass"))
+        save(f"{language}.lrc", write_lrc(vtt))
     if failure:
         raise failure
     return paths
+
+
+def write_lrc(cues: list[VttCue]) -> str:
+    lines = []
+    for cue in sorted(cues, key=lambda cue: cue.start_ms):
+        text = " / ".join(line.strip() for line in cue.text.splitlines() if line.strip())
+        if not text:
+            continue
+        centiseconds = (cue.start_ms + 5) // 10
+        minutes, rest = divmod(centiseconds, 6000)
+        seconds, fraction = divmod(rest, 100)
+        lines.append(f"[{minutes:02d}:{seconds:02d}.{fraction:02d}]{text}")
+    return "\n".join(lines) + ("\n" if lines else "")

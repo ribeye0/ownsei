@@ -6,24 +6,49 @@ import json
 import time
 import uuid
 
-from onsei.domain import Cue
+from onsei.domain import Cue, subtitle_zh
 from onsei.util import digest
 from onsei.preferences import translation_preferences
 from onsei.terminology import project_terms
 
 
 def source_key(snapshot: dict) -> str:
-    return digest({"track": snapshot["track"]["id"], "version": snapshot["version"],
-                   "settings": {"notes": snapshot["settings"].get("notes"), "glossary": project_terms(snapshot["settings"])},
-                   "cues": [(c["id"], Cue.model_validate(c).ja, c["start_ms"], c["end_ms"])
-                            for c in snapshot["cues"]]})
+    return digest(
+        {
+            "track": snapshot["track"]["id"],
+            "version": snapshot["version"],
+            "settings": {
+                "notes": snapshot["settings"].get("notes"),
+                "glossary": project_terms(snapshot["settings"]),
+            },
+            "cues": [
+                (c["id"], Cue.model_validate(c).ja, c["start_ms"], c["end_ms"]) for c in snapshot["cues"]
+            ],
+        }
+    )
 
 
 def run_summary(value):
-    return {**{k: value[k] for k in ("stage", "scope", "status", "parent_result_id", "model_revision", "prompt_version", "target_language", "translation_style") if k in value},
-            "reviewed": len(value.get("coverage", [])) if value.get("stage") == "review" else 0,
-            "patch_count": sum(p.get("applied", False) for p in value.get("patches", [])),
-            "issue_count": len(value.get("issues", []))}
+    return {
+        **{
+            k: value[k]
+            for k in (
+                "stage",
+                "scope",
+                "status",
+                "parent_result_id",
+                "model_revision",
+                "prompt_version",
+                "target_language",
+                "translation_style",
+                "translation_options",
+            )
+            if k in value
+        },
+        "reviewed": len(value.get("coverage", [])) if value.get("stage") == "review" else 0,
+        "patch_count": sum(p.get("applied", False) for p in value.get("patches", [])),
+        "issue_count": len(value.get("issues", [])),
+    }
 
 
 class TranslationRuns:
@@ -40,8 +65,10 @@ class TranslationRuns:
                 raise ValueError("Translation result was deleted")
             value = self.run_metadata(identity, db)
             value.update(changes, updated_at=time.time())
-            db.execute("INSERT OR REPLACE INTO translation_runs VALUES (?,?)",
-                       (identity, json.dumps(value, ensure_ascii=False)))
+            db.execute(
+                "INSERT OR REPLACE INTO translation_runs VALUES (?,?)",
+                (identity, json.dumps(value, ensure_ascii=False)),
+            )
 
     def input_snapshot(self, track_id, version=None, result_id=None, db=None):
         if db is None:
@@ -54,17 +81,33 @@ class TranslationRuns:
         settings = json.loads(db.execute("SELECT payload FROM settings WHERE key='project'").fetchone()[0])
         if result_id is None:
             result_id = self._active_translation(db, track_id, version)
-        if result_id and not db.execute(
-            "SELECT 1 FROM translation_versions WHERE id=? AND track_id=? AND version=?",
-            (result_id, track_id, version)
-        ).fetchone():
+        if (
+            result_id
+            and not db.execute(
+                "SELECT 1 FROM translation_versions WHERE id=? AND track_id=? AND version=?",
+                (result_id, track_id, version),
+            ).fetchone()
+        ):
             raise ValueError("Source translation no longer exists")
-        cues = [Cue.model_validate_json(r[0]) for r in db.execute(
-            "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal", (track_id, version))]
+        cues = [
+            Cue.model_validate_json(r[0])
+            for r in db.execute(
+                "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal",
+                (track_id, version),
+            )
+        ]
         if not cues:
             raise ValueError("No Japanese transcript")
-        values = {r[0]: json.loads(r[1]) for r in db.execute(
-            "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (result_id,))} if result_id else {}
+        values = (
+            {
+                r[0]: json.loads(r[1])
+                for r in db.execute(
+                    "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (result_id,)
+                )
+            }
+            if result_id
+            else {}
+        )
         for cue in cues:
             if result_id:
                 value = values.get(cue.id, {})
@@ -75,21 +118,36 @@ class TranslationRuns:
                     cue.provenance["translation"] = value["translation"]
                 if value.get("review"):
                     cue.provenance["review"] = value["review"]
+                cue.provenance.pop("training", None)
+                if value.get("training"):
+                    cue.provenance["training"] = value["training"]
                 cue.review_flags += value.get("translation_flags", [])
-        snapshot = {"track": track, "version": version, "settings": settings, "result_id": result_id,
-                    "cues": [c.model_dump() for c in cues]}
+        snapshot = {
+            "track": track,
+            "version": version,
+            "settings": settings,
+            "result_id": result_id,
+            "cues": [c.model_dump() for c in cues],
+        }
         snapshot["source_key"] = source_key(snapshot)
-        snapshot["translation_key"] = digest([(c.id, c.zh, c.zh_override, c.translation_status) for c in cues])
+        snapshot["translation_key"] = digest(
+            [(c.id, c.zh, c.zh_override, c.translation_status) for c in cues]
+        )
         return snapshot
 
     def snapshot_valid(self, snapshot, db=None, *, include_translation=False):
         try:
-            current = self.input_snapshot(snapshot["track"]["id"], snapshot["version"],
-                                          snapshot["result_id"] if include_translation else None, db)
+            current = self.input_snapshot(
+                snapshot["track"]["id"],
+                snapshot["version"],
+                snapshot["result_id"] if include_translation else None,
+                db,
+            )
         except (ValueError, TypeError):
             return False
         return current["source_key"] == snapshot["source_key"] and (
-            not include_translation or current["translation_key"] == snapshot["translation_key"])
+            not include_translation or current["translation_key"] == snapshot["translation_key"]
+        )
 
     def new_translation_run(self, snapshot, model, *, stage="draft", identity=None, selected=None):
         identity = identity or uuid.uuid4().hex[:16]
@@ -101,20 +159,42 @@ class TranslationRuns:
                 metadata = self.run_metadata(identity, db)
                 if metadata.get("status") == "stale":
                     raise ValueError("來源已更新，過期檢查點不可續跑，請另建翻譯或審校")
-                if (metadata.get("source_key") != snapshot["source_key"] or metadata.get("stage") != stage or metadata.get("model") != model or
-                    metadata.get("selected_ids", []) != sorted(selected or []) or
-                    translation_preferences(metadata) != translation_preferences(snapshot["settings"]) or
-                    (stage == "review" and metadata.get("source_snapshot", {}).get("translation_key") != snapshot["translation_key"])):
+                if (
+                    metadata.get("source_key") != snapshot["source_key"]
+                    or metadata.get("stage") != stage
+                    or metadata.get("model") != model
+                    or metadata.get("selected_ids", []) != sorted(selected or [])
+                    or translation_preferences(metadata) != translation_preferences(snapshot["settings"])
+                    or (
+                        stage == "review"
+                        and metadata.get("source_snapshot", {}).get("translation_key")
+                        != snapshot["translation_key"]
+                    )
+                ):
                     raise ValueError("Checkpoint input does not match this task")
                 return identity
-            metadata = {"stage": stage, "status": "pending", "parent_result_id": snapshot["result_id"],
-                        "source_key": snapshot["source_key"], "source_snapshot": snapshot,
-                        "coverage": [], "issues": [], "patches": [], "model": model,
-                        "scope": "selected" if selected else "full", "selected_ids": sorted(selected or []),
-                        **translation_preferences(snapshot["settings"])}
-            db.execute("INSERT INTO translation_versions VALUES (?,?,?,?,?)",
-                       (identity, track_id, version, model, time.time()))
-            db.execute("INSERT INTO translation_runs VALUES (?,?)", (identity, json.dumps(metadata, ensure_ascii=False)))
+            metadata = {
+                "stage": stage,
+                "status": "pending",
+                "parent_result_id": snapshot["result_id"],
+                "source_key": snapshot["source_key"],
+                "source_snapshot": snapshot,
+                "coverage": [],
+                "issues": [],
+                "patches": [],
+                "model": model,
+                "scope": "selected" if selected else "full",
+                "selected_ids": sorted(selected or []),
+                **translation_preferences(snapshot["settings"]),
+            }
+            db.execute(
+                "INSERT INTO translation_versions VALUES (?,?,?,?,?)",
+                (identity, track_id, version, model, time.time()),
+            )
+            db.execute(
+                "INSERT INTO translation_runs VALUES (?,?)",
+                (identity, json.dumps(metadata, ensure_ascii=False)),
+            )
             for raw in snapshot["cues"]:
                 cue = Cue.model_validate(raw)
                 if stage == "draft" and not selected:
@@ -123,17 +203,23 @@ class TranslationRuns:
                     cue.provenance.pop("translation", None)
                     cue.provenance.pop("review", None)
                     cue.review_flags = [f for f in cue.review_flags if not f.startswith("translation_")]
-                db.execute("INSERT INTO translation_cues VALUES (?,?,?)",
-                           (identity, cue.id, json.dumps(self._zh_payload(cue), ensure_ascii=False)))
+                db.execute(
+                    "INSERT INTO translation_cues VALUES (?,?,?)",
+                    (identity, cue.id, json.dumps(self._zh_payload(cue), ensure_ascii=False)),
+                )
             # Do not steal the user's current view if they switched while queued.
             track = json.loads(db.execute("SELECT payload FROM tracks WHERE id=?", (track_id,)).fetchone()[0])
-            if track["active_version"] == version and self._active_translation(db, track_id, version) == snapshot["result_id"]:
+            if (
+                track["active_version"] == version
+                and self._active_translation(db, track_id, version) == snapshot["result_id"]
+            ):
                 self._activate_translation(db, track_id, version, identity)
         return identity
 
 
 class TranslationSession:
     """Store facade: all generated writes target one run, independent of active UI selection."""
+
     def __init__(self, store, snapshot, identity, *, include_translation=False):
         self.store, self.snapshot, self.identity = store, snapshot, identity
         self.path = store.path
@@ -145,6 +231,7 @@ class TranslationSession:
 
     def track(self, track_id):
         from onsei.domain import Track
+
         return Track.model_validate({**self.snapshot["track"], "active_version": self.snapshot["version"]})
 
     def prepare_translation(self, *_):
@@ -157,8 +244,12 @@ class TranslationSession:
         with self.store.db() as db:
             if not db.execute("SELECT 1 FROM translation_versions WHERE id=?", (self.identity,)).fetchone():
                 raise ValueError("Translation result was deleted")
-            values = {r[0]: json.loads(r[1]) for r in db.execute(
-                "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (self.identity,))}
+            values = {
+                r[0]: json.loads(r[1])
+                for r in db.execute(
+                    "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (self.identity,)
+                )
+            }
             cues = []
             for raw in self.snapshot["cues"]:
                 cue = Cue.model_validate(raw)
@@ -172,8 +263,13 @@ class TranslationSession:
                 cue.provenance.pop("review", None)
                 if value.get("review"):
                     cue.provenance["review"] = value["review"]
-                cue.review_flags = [f for f in cue.review_flags if not f.startswith("translation_")] + value.get("translation_flags", [])
+                cue.review_flags = [
+                    f for f in cue.review_flags if not f.startswith("translation_")
+                ] + value.get("translation_flags", [])
                 cue.provenance["translation_version"] = self.identity
+                cue.provenance.pop("training", None)
+                if value.get("training"):
+                    cue.provenance["training"] = value["training"]
                 cues.append(cue)
             return cues
 
@@ -183,15 +279,44 @@ class TranslationSession:
                 raise ValueError("來源已更新，停止保存過期結果")
             if not self.store.snapshot_valid(self.snapshot, db, include_translation=self.include_translation):
                 raise ValueError("來源已更新，停止保存舊推論；已完成稿保留")
-            row = db.execute("SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
-                             (self.identity, cue.id)).fetchone()
+            row = db.execute(
+                "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?", (self.identity, cue.id)
+            ).fetchone()
             if not row:
                 raise ValueError("Translation result was deleted")
             if digest(json.loads(row[0])) != self.expected.get(cue.id):
                 return False
+            history = (cue.provenance.get("translation") or {}).get("document_history", [])
+            if history and cue.translation_status == "translated":
+                # A Chinese edit can arrive while the next batch is generating.
+                # Check the actual references in the same transaction as saving.
+                references = {
+                    str(json.loads(source)["ordinal"] + 1): json.loads(payload)
+                    for payload, source in db.execute(
+                        """SELECT c.payload,b.payload FROM translation_cues c
+                                  JOIN cues b ON b.id=c.cue_id WHERE c.result_id=?""",
+                        (self.identity,),
+                    )
+                }
+                for reference in history:
+                    current = references.get(reference["id"], {})
+                    text = current.get("zh_override")
+                    if text is None:
+                        raw = current.get("zh_auto")
+                        # History is built from Cue.zh, i.e. the rendered machine
+                        # subtitle. Compare the same representation, while keeping
+                        # human overrides verbatim and raw output intact for audit.
+                        text = subtitle_zh(raw) if raw is not None else None
+                    if text != reference["zh"] or current.get("translation_status") not in (
+                        "manual",
+                        "translated",
+                    ):
+                        raise ValueError("前文譯文已更新，停止保存舊推論；請續跑翻譯")
             value = self.store._zh_payload(cue)
-            db.execute("UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
-                       (json.dumps(value, ensure_ascii=False), self.identity, cue.id))
+            db.execute(
+                "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
+                (json.dumps(value, ensure_ascii=False), self.identity, cue.id),
+            )
             self.expected[cue.id] = digest(value)
             if self.store._active_translation(db, cue.track_id, cue.version) == self.identity:
                 raw = db.execute("SELECT payload FROM cues WHERE id=?", (cue.id,)).fetchone()

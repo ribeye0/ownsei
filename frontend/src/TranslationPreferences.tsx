@@ -14,6 +14,6 @@ export function TranslationPreferencesFields({ value, onChange, defaultStyles, d
     <div className="preference-tools"><small>{value.translation_style.length}{ui("/2000 · 修改只用於新翻譯，舊稿與人工校對保留")}</small>
       <button disabled={disabled} onClick={() => onChange({ ...value, translation_style: defaultStyles[value.target_language] })}>{ui("恢復預設風格")}</button></div>
     </details>
-    <small>{ui("繁體與簡體各自保留風格。可調整口語與用詞偏好；輸出格式及逐句對應由程式管理，角色設定與譯名請填作品備註及術語表。")}</small>
+    <small>{ui("繁體與簡體各自保留風格。可調整口語與用詞偏好；輸出格式及逐句對應由程式管理，角色設定與譯名請填專案備註及術語表。")}</small>
   </div>;
 }

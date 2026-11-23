@@ -190,8 +190,8 @@ def test_concurrent_exports_publish_complete_files(result):
 
     with ThreadPoolExecutor(4) as pool:
         outputs = list(pool.map(export, range(4)))
-    assert all(len(paths) == 13 for paths in outputs)
-    assert len(fresh_exports(store)) == 13
+    assert all(len(paths) == 16 for paths in outputs)
+    assert len(fresh_exports(store)) == 16
     assert not list((store.path / "exports").glob(".export-*"))
 
 

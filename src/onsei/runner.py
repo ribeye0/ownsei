@@ -12,15 +12,22 @@ from pathlib import Path
 
 from filelock import FileLock, Timeout
 
-from onsei.models import DEFAULT_REVIEW, DEFAULT_TRANSLATION, WHISPER_MODELS
+from onsei.models import DEFAULT_ASR, DEFAULT_TRANSLATION
 from onsei.metrics import GpuMetrics
 from onsei.storage import Store
-from onsei.util import STATE, atomic_json
+from onsei.util import STATE, atomic_json, gpu_lock_path
 from onsei.processes import alive, process_identity, runner_owned
 from onsei.snapshots import cue_digest
 
 
 def run_job(store: Store, job_id: str):
+    from onsei.backend import execution_scope
+
+    with execution_scope(store.job(job_id)["options"].get("execution")):
+        return _run_job(store, job_id)
+
+
+def _run_job(store: Store, job_id: str):
     job = store.job(job_id)
     if job["status"] in ("cancelled", "cancelling"):
         return
@@ -63,16 +70,22 @@ def run_job(store: Store, job_id: str):
         job["last_event"] = event
         if "fraction" in event:
             stage = job.get("current_stage")
+            stage_fraction = min(1, max(0, event["fraction"]))
+            if stage in weights:
+                record = job.setdefault("stages", {}).setdefault(tracks[index].id, {}).setdefault(stage, {})
+                record["progress"] = max(record.get("progress", 0), stage_fraction)
             keys = list(weights)
-            offset = sum(weights[k] for k in keys[:keys.index(stage)]) if stage in weights else 0
-            fraction = offset + weights.get(stage, 1) * min(1, max(0, event["fraction"]))
+            offset = sum(weights[k] for k in keys[: keys.index(stage)]) if stage in weights else 0
+            fraction = offset + weights.get(stage, 1) * stage_fraction
             job["track_progress"] = max(job.get("track_progress", 0), fraction)
             job["progress"] = max(job["progress"], (index + fraction) / len(tracks))
         store.save_job(job)
         print(json.dumps(event, ensure_ascii=False), flush=True)
 
     try:
-        lock = FileLock(STATE / "gpu.lock")
+        lock_path = gpu_lock_path(STATE)
+        print(f"GPU lock: {lock_path}", flush=True)
+        lock = FileLock(lock_path)
         while True:
             if store.job(job_id)["status"] in ("cancelled", "cancelling"):
                 raise InterruptedError("Cancelled")
@@ -106,16 +119,21 @@ def run_job(store: Store, job_id: str):
             if not tracks:
                 raise ValueError("No tracks selected")
             action = job["action"]
-            aligned = action in ("run", "transcribe") and options.get("extra_alignment") and options.get("asr") in WHISPER_MODELS
-            weights = ({"transcribe": .4 if aligned else .55, **({"align": .15} if aligned else {}), "translate": .4, "export": .05}
-                       if action == "run" else {"transcribe": .8 if aligned else .95, **({"align": .15} if aligned else {}), "export": .05}
-                       if action == "transcribe" else {"align": 1} if action == "realign"
-                       else {"translate": .95, "export": .05} if action in ("translate", "review") else {"export": 1})
+            weights = (
+                {"transcribe": 0.55, "translate": 0.4, "export": 0.05}
+                if action == "run"
+                else {"transcribe": 0.95, "export": 0.05}
+                if action == "transcribe"
+                else {"translate": 0.95, "export": 0.05}
+                if action == "translate"
+                else {"export": 1}
+            )
             job["tracks"] = [{"id": t.id, "name": t.name} for t in tracks]
             job["tracks_total"] = len(tracks)
             job["track_outcomes"] = {}
+
             def process_track(track):
-                if action in ("run", "transcribe", "realign"):
+                if action in ("run", "transcribe"):
                     from onsei.source import validate_source
 
                     validate_source(store, track)
@@ -124,11 +142,17 @@ def run_job(store: Store, job_id: str):
                     store, track.id
                 )
                 pinned = options.get("input_snapshots", {}).get(track.id)
-                if action in ("translate", "review") and pinned and not store.snapshot_valid(
-                    pinned, include_translation=action == "review"
+                if (
+                    action in ("translate",)
+                    and pinned
+                    and not store.snapshot_valid(pinned, include_translation=False)
                 ):
                     raise ValueError("排隊／續跑的來源已更新，請重新提交任務；既有成果保留")
-                if action not in ("translate", "review") and not valid_resume and track.id in options.get("transcript_versions", {}):
+                if (
+                    action not in ("translate",)
+                    and not valid_resume
+                    and track.id in options.get("transcript_versions", {})
+                ):
                     version = options["transcript_versions"][track.id]
                     if not version or not store.cues(track.id, version):
                         raise ValueError("Queued transcript no longer exists; submit a new job")
@@ -146,10 +170,14 @@ def run_job(store: Store, job_id: str):
                     job["current_stage"], job["current_track"] = name, track.id
                     record = job.setdefault("stages", {}).setdefault(track.id, {})
                     if previous_stages.get(name, {}).get("status") == "completed":
-                        record[name] = {**previous_stages[name], "resumed_from": old_resume["job_id"]}
+                        record[name] = {
+                            **previous_stages[name],
+                            "progress": 1,
+                            "resumed_from": old_resume["job_id"],
+                        }
                         progress({"message": f"{track.name}: 保留已完成的 {name} 階段", "fraction": 1})
                         return
-                    record[name] = {"status": "running", "started_at": time.time()}
+                    record[name] = {"status": "running", "progress": 0, "started_at": time.time()}
                     progress({"message": f"{track.name}: {name}"})
                     try:
                         execute()
@@ -162,7 +190,7 @@ def run_job(store: Store, job_id: str):
                         )
                         job["failed_stage"], job["failed_track"] = name, track.id
                         raise
-                    record[name].update(status="completed", finished_at=time.time())
+                    record[name].update(status="completed", progress=1, finished_at=time.time())
                     current = store.cues(track.id)
                     record[name]["review_cues"] = sum(
                         "alignment_native_fallback" in c.review_flags for c in current
@@ -178,35 +206,18 @@ def run_job(store: Store, job_id: str):
                         lambda: transcribe(
                             store,
                             track.id,
-                            options.get("asr", "whisper-ja-760m"),
+                            options.get("asr", DEFAULT_ASR),
                             options.get("limit_ms"),
                             progress,
-                            **({"generation": options["asr_generations"][track.id]} if track.id in options.get("asr_generations", {}) else {}),
+                            **({"asr_filter": options["asr_filter"]} if options.get("asr_filter") else {}),
+                            **(
+                                {"generation": options["asr_generations"][track.id]}
+                                if track.id in options.get("asr_generations", {})
+                                else {}
+                            ),
                         ),
                     )
-                if action == "realign" or (
-                    action in ("run", "transcribe")
-                    and options.get("extra_alignment", False)
-                    and options.get("asr", "whisper-ja-760m") in WHISPER_MODELS
-                ):
-                    from onsei.asr import realign, alignment_copy
-
-                    def align():
-                        current = store.cues(track.id)
-                        continuing_copy = (
-                            resume_valid and current and current[0].provenance.get("extra_alignment")
-                        )
-                        if action == "realign" or continuing_copy or alignment_copy(store, track.id):
-                            realign(
-                                store,
-                                track.id,
-                                options.get("cue_ids")
-                                or ([c.id for c in store.cues(track.id)] if action != "realign" else None),
-                                progress,
-                            )
-
-                    stage("align", align)
-                if action in ("translate", "review", "run"):
+                if action in ("translate", "run"):
                     from onsei.translation_pipeline import process_translation
 
                     stage(
@@ -216,41 +227,68 @@ def run_job(store: Store, job_id: str):
                             track.id,
                             options.get("translation", DEFAULT_TRANSLATION),
                             progress,
-                            snapshot=options.get("input_snapshots", {}).get(track.id) if action != "run" else None,
+                            snapshot=options.get("input_snapshots", {}).get(track.id)
+                            if action != "run"
+                            else None,
                             selected=options.get("cue_ids"),
-                            review_only=action == "review", after_review=options.get("after_review", False),
-                            use_reference=options.get("use_reference", False),
-                            review_model=options.get("review_model", DEFAULT_REVIEW),
                             outputs=options.get("processing_outputs", {}).get(track.id),
                             translation_settings=options.get("translation_settings"),
-                            translation_context=options.get("translation_context") if action == "run" else None,
+                            translation_options=options.get("translation_options"),
+                            translation_context=options.get("translation_context")
+                            if action == "run"
+                            else None,
                         ),
                     )
-                if action in ("transcribe", "translate", "review", "run", "export"):
+                if action in ("transcribe", "translate", "run", "export"):
                     from onsei.export import export_track
 
                     output = options.get("processing_outputs", {}).get(track.id, {})
-                    result_id = output.get("review") or output.get("draft")
+                    result_id = output.get("draft")
 
                     stage(
                         "export",
                         lambda: export_track(
-                            store, track.id, store.path / "exports", japanese_only=action == "transcribe",
-                            version=options.get("input_snapshots", {}).get(track.id, {}).get("version") if result_id else None,
+                            store,
+                            track.id,
+                            store.path / "exports",
+                            japanese_only=action == "transcribe",
+                            version=options.get("input_snapshots", {}).get(track.id, {}).get("version")
+                            if result_id
+                            else None,
                             result_id=result_id,
                         ),
                     )
+
             for index, track in enumerate(tracks):
-                job.update(current_track=track.id, current_track_name=track.name,
-                           track_number=index + 1, track_progress=0, current_stage=None)
+                job.update(
+                    current_track=track.id,
+                    current_track_name=track.name,
+                    track_number=index + 1,
+                    track_progress=0,
+                    current_stage=None,
+                )
                 store.save_job(job)
                 try:
                     process_track(track)
                     job["track_outcomes"][track.id] = {"status": "completed"}
                 except (ValueError, RuntimeError) as error:
-                    systemic = any(word in str(error).lower() for word in (
-                        "model missing", "llama-server", "worker failed", "worker timed out",
-                        "cuda", "out of memory", "unsupported", "載入模型", "沒有進展", "connection refused", "connection reset", "timed out"))
+                    systemic = any(
+                        word in str(error).lower()
+                        for word in (
+                            "model missing",
+                            "llama-server",
+                            "worker failed",
+                            "worker timed out",
+                            "cuda",
+                            "out of memory",
+                            "unsupported",
+                            "載入模型",
+                            "沒有進展",
+                            "connection refused",
+                            "connection reset",
+                            "timed out",
+                        )
+                    )
                     if not options.get("continue_on_error") or systemic:
                         raise
                     job["track_outcomes"][track.id] = {"status": "failed", "error": str(error)}
@@ -258,9 +296,12 @@ def run_job(store: Store, job_id: str):
                 job["progress"] = (index + 1) / len(tracks)
                 store.save_job(job)
             failed = sum(v["status"] == "failed" for v in job["track_outcomes"].values())
-            job.update(status="partial" if failed else "completed",
-                       message=f"完成 {len(tracks) - failed}/{len(tracks)} 條音軌" + (f"；失敗 {failed} 條，可恢復未完成項目" if failed else ""),
-                       finished_at=time.time())
+            job.update(
+                status="partial" if failed else "completed",
+                message=f"完成 {len(tracks) - failed}/{len(tracks)} 條音軌"
+                + (f"；失敗 {failed} 條，可恢復未完成項目" if failed else ""),
+                finished_at=time.time(),
+            )
         finally:
             try:
                 if metrics_started:
@@ -368,19 +409,20 @@ def recover(store: Store):
 
 
 def result_fingerprint(store, track_id):
-    from onsei.asr import ASR_CONFIG, ALIGNMENT_CONFIG, REALIGNMENT_CONFIG
-    from onsei.translation import CONFIG, PROMPT_VERSION, model_prompt_version
+    from onsei.asr import ASR_CONFIG, ASSEMBLY_CONFIG, HAAS_CONFIG
+    from onsei.translation_config import CONFIG, PROMPT_VERSION
+    from onsei.context import DOCUMENT_CONFIG
     from onsei.models import REGISTRY
 
     track, cues = store.result(track_id)
     return {
         "implementation": [
             ASR_CONFIG,
-            ALIGNMENT_CONFIG,
-            REALIGNMENT_CONFIG,
+            ASSEMBLY_CONFIG,
+            HAAS_CONFIG,
             CONFIG,
+            DOCUMENT_CONFIG,
             PROMPT_VERSION,
-            model_prompt_version("asmr-qwen3.5-9b"),
             json.loads(json.dumps(REGISTRY)),
         ],
         "version": track.active_version,
@@ -392,6 +434,8 @@ def result_fingerprint(store, track_id):
 
 
 def resume_job(store, old):
+    if old.get("options", {}).get("prototype"):
+        raise ValueError("試用版任務保留為歷史紀錄，請用處理音軌或批量處理建立新版任務")
     if old["status"] in ("queued", "waiting", "running", "cancelling"):
         raise ValueError("Job already active")
     job = store.new_job(old["action"], old["options"])

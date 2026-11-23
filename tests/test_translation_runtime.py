@@ -4,34 +4,35 @@ import json
 import pytest
 
 import onsei.translation as translation
+from onsei import inference, models
 from onsei.domain import Cue, Track
 from onsei.storage import Store
-from onsei.translation_runtime import DecodingProfile, decoding_profile, inference_summary
+from onsei.translation_runtime import inference_summary
 
 
-def test_profiles_do_not_change_output_contract(monkeypatch):
-    monkeypatch.setenv("ONSEI_TRANSLATION_ACCELERATION", "none")
-    assert decoding_profile("index-translate-9b").flags() == []
-    monkeypatch.setenv("ONSEI_TRANSLATION_ACCELERATION", "mtp")
-    assert decoding_profile("index-translate-9b").flags() == [
-        "--spec-type",
-        "draft-mtp",
-        "--spec-draft-n-max",
-        "3",
-    ]
-    # Explicit benchmark configuration takes precedence over the service environment.
-    assert decoding_profile("index-translate-9b", "none").flags() == []
-    monkeypatch.setenv("ONSEI_TRANSLATION_ACCELERATION", "auto")
-    assert decoding_profile("index-translate-9b").speculative == "draft-mtp"
-    assert decoding_profile("index-translate-2b").speculative == "none"
-    assert decoding_profile("asmr-qwen3.5-9b").speculative == "none"
-    assert decoding_profile("hy-mt2-7b").speculative == "none"
-    monkeypatch.setenv("ONSEI_TRANSLATION_ACCELERATION", "invalid")
-    with pytest.raises(ValueError, match="ACCELERATION"):
-        decoding_profile("index-translate-9b")
-    for size in [0, 9, True, "3"]:
-        with pytest.raises(ValueError, match="token count"):
-            DecodingProfile("draft-mtp", size)
+def test_cuda_prefill_uses_measured_baseline_and_explicit_override(monkeypatch):
+    import onsei.translation_runtime as runtime
+
+    monkeypatch.delenv("ONSEI_PREFILL_MICROBATCH", raising=False)
+    assert runtime.prefill_microbatch("qwen3.5-4b-names") == 512
+    assert runtime.prefill_microbatch("index-translate-9b") == 512
+    monkeypatch.setenv("ONSEI_PREFILL_MICROBATCH", "1024")
+    assert runtime.prefill_microbatch("index-translate-9b") == 1024
+    monkeypatch.setenv("ONSEI_PREFILL_MICROBATCH", "9000")
+    with pytest.raises(ValueError, match="PREFILL_MICROBATCH"):
+        runtime.prefill_microbatch("index-translate-9b")
+
+
+def test_prefill_oom_retries_smaller_without_changing_decoding(monkeypatch, tmp_path):
+    engine = translation.Llama("index-translate-9b", tmp_path)
+    engine.prefill_microbatch = 1024
+    original = engine.profile
+    engine.log = io.StringIO()
+    started = []
+    monkeypatch.setattr(engine, "_stop_server", lambda: None)
+    monkeypatch.setattr(engine, "_start_server", lambda: started.append(engine.prefill_microbatch))
+    assert engine.fallback("CUDA out of memory")
+    assert started == [512] and engine.profile == original
 
 
 def test_performance_summary_includes_rejected_work_and_real_saved_throughput():
@@ -106,7 +107,7 @@ def test_oversized_prompt_does_not_restart_engine_or_reject_previous_request(tmp
             if path == "/apply-template":
                 return Response({"prompt": "oversized"})
             assert path == "/tokenize"
-            return Response({"tokens": list(range(translation.CONFIG["context"]))})
+            return Response({"tokens": list(range(inference.CONFIG["context"]))})
 
     engine.client = Client()
     monkeypatch.setattr(engine, "fallback", lambda _: pytest.fail("Must split, not restart"))
@@ -118,16 +119,21 @@ def test_oversized_prompt_does_not_restart_engine_or_reject_previous_request(tmp
     assert previous["validation"] == "accepted"
 
 
-def test_startup_fallback_keeps_history_and_cleanup(tmp_path, monkeypatch):
+@pytest.mark.parametrize("name", ["index-translate-9b", "index-translate-ownsei-sft48-q4-k-m"])
+def test_startup_fallback_keeps_history_and_cleanup(tmp_path, monkeypatch, name):
     binary = tmp_path / ".tools/llama/llama-server"
     binary.parent.mkdir(parents=True)
     binary.touch()
-    model = tmp_path / translation.GGUF["index-translate-9b"]
+    model = tmp_path / models.GGUF["index-translate-9b"]
     model.touch()
-    monkeypatch.setattr(translation, "ROOT", tmp_path)
-    monkeypatch.setattr(translation, "model_dir", lambda _: tmp_path)
+    monkeypatch.setattr(inference.backend, "binary", lambda _: binary)
+    monkeypatch.setattr(inference.backend, "device", lambda _: "Vulkan0")
+    adapter = tmp_path / "adapter.gguf" if "ownsei-sft" in name else None
+    if adapter:
+        adapter.touch()
+    monkeypatch.setattr(inference, "translation_files", lambda _: (model, adapter))
     monkeypatch.setattr(
-        translation.subprocess,
+        inference.subprocess,
         "run",
         lambda *a, **k: type("Version", (), {"stdout": "b11541", "stderr": ""})(),
     )
@@ -136,13 +142,14 @@ def test_startup_fallback_keeps_history_and_cleanup(tmp_path, monkeypatch):
 
     def start(engine):
         starts.append(engine.profile.speculative)
+        assert engine.model == name and engine.lora == adapter
         if engine.profile.speculative != "none":
             raise RuntimeError("MTP head unavailable")
 
     monkeypatch.setattr(translation.Llama, "_start_server", start)
     monkeypatch.setattr(translation.Llama, "_stop_server", lambda _: stops.append(True))
     directory = tmp_path / "acceptance"
-    with translation.Llama("index-translate-9b", directory, speculative="draft-mtp") as engine:
+    with translation.Llama(name, directory, speculative="draft-mtp") as engine:
         assert engine.profile.speculative == "none"
     report = json.loads((directory / "last-inference-metrics.json").read_text())
     assert starts == ["draft-mtp", "none"] and len(stops) == 2
@@ -156,11 +163,14 @@ def test_cancel_during_load_does_not_attempt_acceleration_fallback(tmp_path, mon
     binary = tmp_path / ".tools/llama/llama-server"
     binary.parent.mkdir(parents=True)
     binary.touch()
-    (tmp_path / translation.GGUF["index-translate-9b"]).touch()
-    monkeypatch.setattr(translation, "ROOT", tmp_path)
-    monkeypatch.setattr(translation, "model_dir", lambda _: tmp_path)
+    (tmp_path / models.GGUF["index-translate-9b"]).touch()
+    monkeypatch.setattr(inference.backend, "binary", lambda _: binary)
+    monkeypatch.setattr(inference.backend, "device", lambda _: "Vulkan0")
     monkeypatch.setattr(
-        translation.subprocess, "run", lambda *a, **k: type("Version", (), {"stdout": "test", "stderr": ""})()
+        inference, "translation_files", lambda _: (tmp_path / models.GGUF["index-translate-9b"], None)
+    )
+    monkeypatch.setattr(
+        inference.subprocess, "run", lambda *a, **k: type("Version", (), {"stdout": "test", "stderr": ""})()
     )
 
     def start(_):
@@ -174,6 +184,7 @@ def test_cancel_during_load_does_not_attempt_acceleration_fallback(tmp_path, mon
 
 
 def test_semantic_hints_keep_acceleration_and_preserve_manual(tmp_path, monkeypatch):
+    monkeypatch.setattr("onsei.translation_names.build_name_memory", lambda *a, **kw: [])
     store = Store.create(tmp_path / "project", "test")
     track = Track(
         id="t", name="test", source="/fake", sha256="h", duration_ms=4000, sample_rate=16000, channels=1
@@ -203,7 +214,7 @@ def test_semantic_hints_keep_acceleration_and_preserve_manual(tmp_path, monkeypa
     class Engine:
         profile = "draft-mtp"
 
-        def __init__(self, *_):
+        def __init__(self, *_, **kwargs):
             pass
 
         def __enter__(self):
@@ -232,6 +243,7 @@ def test_semantic_hints_keep_acceleration_and_preserve_manual(tmp_path, monkeypa
 
 
 def test_structurally_valid_cache_with_semantic_hint_is_reused(tmp_path, monkeypatch):
+    monkeypatch.setattr("onsei.translation_names.build_name_memory", lambda *a, **kw: [])
     store = Store.create(tmp_path / "project", "cache validation")
     track = Track(
         id="t", name="test", source="/fake", sha256="h", duration_ms=1000, sample_rate=16000, channels=1
@@ -256,7 +268,7 @@ def test_structurally_valid_cache_with_semantic_hint_is_reused(tmp_path, monkeyp
     calls = []
 
     class Engine:
-        def __init__(self, *_):
+        def __init__(self, *_, **kwargs):
             pass
 
         def __enter__(self):

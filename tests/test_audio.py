@@ -101,3 +101,52 @@ def test_changing_file_during_hash_is_not_saved(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="變更"):
         import_audio(store, source)
     assert store.tracks() == []
+
+
+def test_variant_selection_matches_format_folders_but_keeps_discs_and_editions(tmp_path, monkeypatch):
+    import onsei.audio as audio
+
+    names = [
+        "WAV/01：声.wav",
+        "MP3/01：声.mp3",
+        "Disc2/WAV/01：声.wav",
+        "Disc2/MP3/01：声.mp3",
+        "other/01：声.mp3",
+        "WAV/02.wav",
+        "MP3/02.mp3",
+        "MP3/only.mp3",
+    ]
+    paths = [tmp_path / name for name in names]
+    monkeypatch.setattr(
+        audio, "probe", lambda p: {"duration_ms": 120000 if str(p).endswith("02.mp3") else 60000}
+    )
+    selected, skipped = audio.select_audio_variants(paths, tmp_path)
+    assert skipped == 2
+    assert [p.relative_to(tmp_path).as_posix() for p in selected] == [names[i] for i in [0, 2, 4, 5, 6, 7]]
+    # Multiple WAVs are ambiguous: never silently discard a matching MP3.
+    selected, skipped = audio.select_audio_variants(
+        [tmp_path / p for p in ["wav/a.wav", "WAV版/a.wav", "mp3/a.mp3"]], tmp_path
+    )
+    assert len(selected) == 3 and skipped == 0
+
+
+def test_import_real_wav_mp3_in_separate_folders(tmp_path):
+    for folder in ["WAV", "MP3"]:
+        (tmp_path / folder).mkdir()
+    source = tmp_path / "WAV" / "01：ネイティブ 名前.wav"
+    with wave.open(str(source), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(b"\0\0" * 16000)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(source), str(tmp_path / "MP3" / (source.stem + ".mp3"))],
+        check=True,
+    )
+    store = Store.create(tmp_path / "project", "variants")
+    progress = []
+    tracks = import_audio(store, tmp_path, progress=progress.append)
+    assert len(tracks) == 1 and tracks[0].source == str(source)
+    assert tracks[0].name == "01：ネイティブ 名前"
+    assert progress[-1]["variants_skipped"] == 1
+    assert progress[-1]["files_total"] == progress[-1]["added"] == 1

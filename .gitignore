@@ -11,6 +11,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+unsloth_compiled_cache/
 *.egg-info/
 .env
 
@@ -38,8 +39,29 @@ __pycache__/
 *.vtt
 *.srt
 *.ass
+*.lrc
+*.jsonl
 *.pem
 *.key
 .netrc
 .npmrc
 .DS_Store
+
+# Inference engines, prototypes and local migration artifacts
+bin/
+downloads/
+data/
+results/
+prototype/
+input.json
+regions*.json
+acceptance.json
+runtime-vad.json
+vad-settings.json
+
+# Distribution outputs
+dist/
+build/
+*.tar.gz
+*.part
+*.tmp

@@ -6,8 +6,10 @@ from onsei.domain import Cue, Track
 from onsei.export import export_track
 from onsei.snapshots import fresh_exports, register_export
 from onsei.storage import Store
-from onsei.translation import CONFIG, PROMPT_VERSION, build_prompt, parse_reply
+from onsei.translation_config import CONFIG, PROMPT_VERSION
+from onsei.translation_adapters import build_prompt, parse_reply
 import onsei.translation as module
+from onsei import inference
 
 
 @pytest.mark.parametrize(
@@ -86,10 +88,11 @@ def test_prompt_compact_ids_dialogue_and_original_is_preserved(store):
 
 
 def test_upgrade_invalid_cache_retry_and_preserve_manual(store, monkeypatch):
+    monkeypatch.setattr("onsei.translation_names.build_name_memory", lambda *a, **kw: [])
     calls = []
 
     class Engine:
-        def __init__(self, *_):
+        def __init__(self, *_, **kwargs):
             pass
 
         def __enter__(self):
@@ -106,20 +109,20 @@ def test_upgrade_invalid_cache_retry_and_preserve_manual(store, monkeypatch):
 
     monkeypatch.setattr(module, "Llama", Engine)
     store.edit("long-stable-0", {"zh_override": "人工譯文"})
-    module.translate(store, "t", "index-translate-2b", None, lambda _: None)
+    module.translate(store, "t", "index-translate-9b", None, lambda _: None)
     assert len(calls) == 2 and calls[1]["retry"]
     assert store.cue("long-stable-0").zh == "人工譯文"
     c = store.cue("long-stable-1")
     assert c.provenance["translation"]["prompt_version"] == PROMPT_VERSION
-    module.translate(store, "t", "index-translate-2b", None, lambda _: None)
+    module.translate(store, "t", "index-translate-9b", None, lambda _: None)
     assert len(calls) == 2
     cache = store.path / "cache/t/translation" / (c.provenance["translation"]["cache_key"] + ".json")
     cached = json.loads(cache.read_text())
-    cached["lines"][1]["text"] += "</think_never_used_bad>"
+    next(row for row in cached["lines"] if row["id"] == c.id)["text"] += "</think_never_used_bad>"
     cache.write_text(json.dumps(cached))
     c.provenance["translation"]["prompt_version"] = PROMPT_VERSION - 1
     store.save_generated(c, c.revision)
-    module.translate(store, "t", "index-translate-2b", None, lambda _: None)
+    module.translate(store, "t", "index-translate-9b", None, lambda _: None)
     assert len(calls) == 3 and cache.with_suffix(".invalid.json").exists()
     assert store.cue("long-stable-0").zh == "人工譯文"
     assert store.cue("long-stable-1").zh == "怎麼不說話了"
@@ -131,14 +134,19 @@ def test_legacy_polluted_exports_blocked_but_manual_retained(store):
         c.zh_auto = "好</think_never_used_bad>"
         c.translation_status = "translated"
         store.save_generated(c, c.revision)
-    register_export(store, "t", store.cues("t"), ["old.zh-TW.txt", "old.bilingual.srt", "old.ja.txt"])
-    assert fresh_exports(store) == ["old.ja.txt"]
+    register_export(
+        store,
+        "t",
+        store.cues("t"),
+        ["old.zh-TW.txt", "old.bilingual.srt", "old.ja.txt", "old.ja.ass", "old.ja.lrc"],
+    )
+    assert fresh_exports(store) == ["old.ja.txt", "old.ja.ass", "old.ja.lrc"]
     with pytest.raises(ValueError):
         export_track(store, "t", store.path / "exports")
     for c in store.cues("t"):
         store.edit(c.id, {"zh_override": "人工譯文（已校對）"})
     exports = export_track(store, "t", store.path / "exports")
-    assert len(exports) == 13
+    assert len(exports) == 16
     assert sum(p.suffix == ".vtt" for p in exports) == 3
 
 
@@ -165,7 +173,7 @@ def test_token_budget_uses_rendered_chat_template(tmp_path):
                 return Response({"tokens": list(range(CONFIG["context"]))})
             raise AssertionError("Oversized input must never reach generation")
 
-    engine = module.Llama("index-translate-2b", tmp_path)
+    engine = inference.Llama("index-translate-9b", tmp_path)
     engine.client = Client()
     with pytest.raises(ValueError, match="context budget"):
         engine.generate(
@@ -195,78 +203,6 @@ def test_legacy_pollution_is_visible_as_stale_without_erasing_raw_text(store):
     assert "translation_invalid_output" not in store.cue(c.id).review_flags
 
 
-def test_native_model_prompt_and_normalization(store):
-    data = module.payload(store.cues("t"), store.cues("t"), store.settings(), "校園對話")
-    prompt, lines, mapping = build_prompt("asmr-qwen3.5-9b", data)
-    assert lines[0]["id"] == 1 and lines[0]["start"] == 0 and lines[0]["end"] == 900
-    assert "逐字稿：" in prompt and "不要合併" in prompt and '"ids": [<n>]' in prompt
-    rows = [
-        {"ids": [line["id"]], "text": "怎麼不說話了？", "start": line["start"], "end": line["end"]}
-        for line in lines
-    ]
-    normalized = module.normalize_native_reply(json.dumps(rows), lines)
-    assert parse_reply(normalized, list(mapping)) == {"1": "怎麼不說話了？", "2": "怎麼不說話了？"}
-    for bad in ([1, 2], [2], [True], ["1"]):
-        changed = json.loads(json.dumps(rows))
-        changed[0]["ids"] = bad
-        with pytest.raises(ValueError):
-            module.normalize_native_reply(json.dumps(changed), lines)
-    changed = json.loads(json.dumps(rows))
-    changed[0]["start"] = 0.0
-    with pytest.raises(ValueError):
-        module.normalize_native_reply(json.dumps(changed), lines)
-    changed = json.loads(json.dumps(rows))
-    changed[0]["end"] += 1
-    with pytest.raises(ValueError):
-        module.normalize_native_reply(json.dumps(changed), lines)
-    with pytest.raises(ValueError):
-        module.normalize_native_reply(json.dumps(rows[::-1]), lines)
-
-
-def test_native_completion_uses_fixed_grammar_and_maps_stable_ids(store, tmp_path):
-    class Response:
-        def __init__(self, value):
-            self.value = value
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return self.value
-
-    class Client:
-        def __init__(self):
-            self.calls = []
-
-        def post(self, path, json):
-            self.calls.append((path, json))
-            if path == "/apply-template":
-                return Response({"prompt": "model-native-template"})
-            if path == "/tokenize":
-                return Response({"tokens": [1]})
-            assert path == "/completion"
-            return Response(
-                {
-                    "content": '[{"ids":[1],"source":"センパイは私がいると邪魔?","text":"他說\\"你好\\"（小聲）。","start":0,"end":900}]',
-                    "stop": True,
-                    "stop_type": "eos",
-                }
-            )
-
-    engine = module.Llama("asmr-qwen3.5-9b", tmp_path)
-    engine.client = Client()
-    cue = store.cues("t")[0]
-    reply = engine.generate(module.payload([cue], [cue], store.settings()))
-    assert parse_reply(reply, [cue.id]) == {cue.id: '他說"你好"（小聲）。'}
-    request = engine.client.calls[-1][1]
-    assert request["prompt"] == "model-native-template"
-    assert "grammar" in request and "json_schema" not in request
-    assert "row0" in request["grammar"] and "char ::=" in request["grammar"]
-    lines = [{"id":1,"text":cue.ja,"start":0,"end":900}]
-    with pytest.raises(ValueError,match='source/ID'):
-        module.normalize_native_reply(json.dumps([{"ids":[1],"source":"別句", "text":"你好", "start":0,"end":900}]),lines,grounded=True)
-
-
 def test_unicode_escaped_delimiters_and_serialized_metadata_are_rejected():
     with pytest.raises(ValueError):
         parse_reply(r'[{"id":"a","text":"好的\u007d, \u007b"}]', ["a"])
@@ -277,8 +213,34 @@ def test_unicode_escaped_delimiters_and_serialized_metadata_are_rejected():
 def test_index_profiles_use_one_source_representation_and_ground_each_row(store):
     data = module.payload(store.cues("t"), store.cues("t"), {"notes": "學妹對學長說話", "glossary": {}})
     big, _, _ = build_prompt("index-translate-9b", data)
-    small, _, _ = build_prompt("index-translate-2b", data)
+    small, _, _ = build_prompt("index-translate-9b", data)
     assert "整批連續台詞" not in big and big.count("黙っちゃった") == 1
     assert "source原樣抄寫" in big and "source原樣抄寫" in small
     assert "整批連續台詞" not in small and '"id":"2","text":"黙っちゃった"' in small
     assert "學妹對學長說話" in big and "學妹對學長說話" in small
+
+
+def test_dense_batches_stay_inside_invalidation_grid_and_preserve_all_targets():
+    from onsei.translation_contract import natural_batches, dependency_window, MAX_SOURCE_CHARS
+
+    cues = [
+        Cue(
+            id=f"c{i}",
+            track_id="t",
+            version="v",
+            ordinal=i,
+            start_ms=i * 1000,
+            end_ms=i * 1000 + 900,
+            ja_raw="長い台詞" * 30,
+        )
+        for i in range(50)
+    ]
+    batches = natural_batches(cues)
+    assert [c.id for batch in batches for c in batch] == [c.id for c in cues]
+    for batch in batches:
+        assert len(batch) <= 24 and sum(len(c.ja) for c in batch) <= MAX_SOURCE_CHARS
+        assert len({c.ordinal // 24 for c in batch}) == 1
+        lo, hi = dependency_window(batch[0].ordinal)
+        assert all(
+            lo <= c.ordinal < hi for c in cues if batch[0].ordinal - 6 <= c.ordinal <= batch[-1].ordinal + 6
+        )

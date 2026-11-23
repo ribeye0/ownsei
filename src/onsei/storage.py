@@ -10,6 +10,7 @@ from filelock import FileLock
 
 from onsei.domain import Cue, Track
 from onsei.versions import VersionStore
+from onsei.util import digest
 from onsei.translation_contract import dependency_window, polluted
 
 
@@ -84,6 +85,7 @@ class Store(VersionStore):
         with self.db(write=True) as db:
             old = json.loads(db.execute("SELECT payload FROM settings WHERE key='project'").fetchone()[0])
             from onsei.terminology import project_terms
+
             merged = {**old, **changes}
             if "glossary" in changes and "glossary_entries" not in changes:
                 merged.pop("glossary_entries", None)
@@ -198,6 +200,18 @@ class Store(VersionStore):
                 "translation_version"
             ) != current.provenance.get("translation_version"):
                 return False
+            translation = cue.provenance.get("translation") or {}
+            if cue.translation_status == "translated" and translation.get("document_key"):
+                source = [
+                    read_cue(r[0])
+                    for r in db.execute(
+                        "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal",
+                        (cue.track_id, cue.version),
+                    )
+                ]
+                document = [{"id": str(c.ordinal + 1), "text": c.ja} for c in source]
+                if digest(document) != translation["document_key"]:
+                    return False
             cue.ja_override, cue.zh_override = current.ja_override, current.zh_override
             cue.revision = current.revision + 1
             self._write_version_cue(db, cue)
@@ -212,6 +226,7 @@ class Store(VersionStore):
         require_active=False,
         expected_result=None,
     ) -> Cue:
+        changes = dict(changes)
         allowed = {"ja_override", "zh_override", "start_ms", "end_ms", "review_flags"}
         if set(changes) - allowed:
             raise ValueError("Unsupported cue fields")
@@ -234,7 +249,7 @@ class Store(VersionStore):
             if after.end_ms > track.duration_ms:
                 raise ValueError("Cue ends beyond audio")
             if after.ja != before.ja:
-                after.timing_status = "stale"
+                # Native ASR timing survives a text correction; only the translation becomes stale.
                 after.translation_status = "manual" if after.zh_override is not None else "stale"
                 # Invalidate every batch that can read the changed Japanese cue,
                 # including adaptive sub-batches and inference already in flight.
@@ -251,22 +266,31 @@ class Store(VersionStore):
                         self._invalidate_versions(db, [neighbor.id])
             if "zh_override" in changes and after.zh_override != before.zh_override:
                 after.translation_status = "manual" if after.zh_override is not None else "stale"
-            if after.ja == before.ja and (after.start_ms, after.end_ms) != (before.start_ms, before.end_ms):
+            if (after.start_ms, after.end_ms) != (before.start_ms, before.end_ms):
                 after.timing_status = "manual"
             self._write_version_cue(db, after)
             if after.ja != before.ja or (after.start_ms, after.end_ms) != (before.start_ms, before.end_ms):
-                db.execute("""UPDATE translation_runs SET payload=json_set(payload,'$.status','stale')
+                db.execute(
+                    """UPDATE translation_runs SET payload=json_set(payload,'$.status','stale')
                     WHERE result_id IN (SELECT id FROM translation_versions WHERE track_id=? AND version=?)""",
-                           (after.track_id, after.version))
+                    (after.track_id, after.version),
+                )
             elif after.zh != before.zh:
-                db.execute("""WITH RECURSIVE descendants(id) AS (
+                self._invalidate_history_translations(
+                    db, before.provenance.get("translation_version"), after.ordinal
+                )
+                db.execute(
+                    """WITH RECURSIVE descendants(id) AS (
                     SELECT result_id FROM translation_runs WHERE json_extract(payload,'$.parent_result_id')=?
                     UNION SELECT r.result_id FROM translation_runs r JOIN descendants d
                     ON json_extract(r.payload,'$.parent_result_id')=d.id)
                     UPDATE translation_runs SET payload=json_set(payload,'$.status','stale')
-                    WHERE result_id IN (SELECT id FROM descendants)""", (before.provenance.get("translation_version"),))
+                    WHERE result_id IN (SELECT id FROM descendants)""",
+                    (before.provenance.get("translation_version"),),
+                )
             if after.ja != before.ja:
                 self._invalidate_versions(db, [cue_id])
+                self._invalidate_document_translations(db, after.track_id, after.version)
             db.execute(
                 "INSERT INTO edits(cue_id,before,after,time) VALUES (?,?,?,?)",
                 (cue_id, before.model_dump_json(), after.model_dump_json(), time.time()),
@@ -275,24 +299,51 @@ class Store(VersionStore):
 
     def new_job(self, action: str, options: dict) -> dict:
         from copy import deepcopy
+
         options = deepcopy(options)
+        if action in ("run", "translate"):
+            from onsei.context import translation_options
+
+            options["translation_options"] = translation_options(
+                {"translation_options": options.get("translation_options") or {}},
+                options.get("translation", "index-nativelong-9b"),
+            )
         from onsei.preferences import translation_preferences, pin_translation_settings, updated_preferences
+
         if options.get("track_ids") == []:
             raise ValueError("請至少選擇一條音軌")
         project_settings = self.settings()
         overrides = options.get("translation_settings", {})
         settings = {**project_settings, **updated_preferences(project_settings, overrides), **overrides}
-        if action in ("run", "translate", "review"):
+        if action in ("run", "translate"):
             from onsei.terminology import normalize_entries, enabled_terms
-            entries = normalize_entries(project_settings.get("glossary_entries", project_settings.get("glossary", {})))
-            options.setdefault("translation_context", {"notes": project_settings.get("notes", ""),
-                                                       "glossary_entries": entries, "glossary": enabled_terms(entries)})
-        options["translation_settings"] = (pin_translation_settings(settings) if action in ("run", "translate", "review")
-                                           else translation_preferences(settings))
+
+            entries = normalize_entries(
+                project_settings.get("glossary_entries", project_settings.get("glossary", {}))
+            )
+            options.setdefault(
+                "translation_context",
+                {
+                    "notes": project_settings.get("notes", ""),
+                    "glossary_entries": entries,
+                    "glossary": enabled_terms(entries),
+                },
+            )
+        options["translation_settings"] = (
+            pin_translation_settings(settings)
+            if action in ("run", "translate")
+            else translation_preferences(settings)
+        )
         if action in ("run", "transcribe") and options.get("fresh_asr"):
-            options.setdefault("asr_generations", {t.id: uuid.uuid4().hex for t in self.tracks()
-                                                  if options.get("track_ids") is None or t.id in options["track_ids"]})
-        if action in ("translate", "review", "realign", "export"):
+            options.setdefault(
+                "asr_generations",
+                {
+                    t.id: uuid.uuid4().hex
+                    for t in self.tracks()
+                    if options.get("track_ids") is None or t.id in options["track_ids"]
+                },
+            )
+        if action in ("translate", "export"):
             options.setdefault(
                 "transcript_versions",
                 {
@@ -301,7 +352,7 @@ class Store(VersionStore):
                     if not options.get("track_ids") or t.id in options["track_ids"]
                 },
             )
-            if action in ("realign", "review", "export"):
+            if action in ("export",):
                 with self.db() as db:
                     options.setdefault(
                         "translation_versions",
@@ -310,13 +361,19 @@ class Store(VersionStore):
                             for t, v in options["transcript_versions"].items()
                         },
                     )
-            if action in ("translate", "review"):
-                options.setdefault("input_snapshots", {
-                    t: self.input_snapshot(t, v) for t, v in options["transcript_versions"].items()
-                    if v and self.cues(t, v)
-                })
+            if action in ("translate",):
+                options.setdefault(
+                    "input_snapshots",
+                    {
+                        t: self.input_snapshot(t, v)
+                        for t, v in options["transcript_versions"].items()
+                        if v and self.cues(t, v)
+                    },
+                )
         for snapshot in options.get("input_snapshots", {}).values():
             snapshot["settings"] = {**snapshot["settings"], **options["translation_settings"]}
+            if options.get("translation_options"):
+                snapshot["settings"]["translation_options"] = options["translation_options"]
         job = {
             "id": uuid.uuid4().hex,
             "action": action,

@@ -65,12 +65,20 @@ def result_exports(db, track_id: str, cues: list[Cue]) -> list[str]:
         return []
     files = value["files"]
     identity = cues[0].provenance.get("translation_version") if cues else None
-    metadata_row = db.execute("SELECT payload FROM translation_runs WHERE result_id=?", (identity,)).fetchone()
+    metadata_row = db.execute(
+        "SELECT payload FROM translation_runs WHERE result_id=?", (identity,)
+    ).fetchone()
     metadata = json.loads(metadata_row[0]) if metadata_row else {}
-    if (metadata.get("status") == "stale" or
-        (metadata.get("stage") == "review" and metadata.get("status") != "completed") or
-        any(c.zh_override is None and polluted(c.zh_auto) for c in cues)):
-        files = [name for name in files if name.endswith((".jsonl", ".ja.txt", ".ja.srt", ".ja.vtt"))]
+    if (
+        metadata.get("status") == "stale"
+        or (metadata.get("stage") == "review" and metadata.get("status") != "completed")
+        or any(c.zh_override is None and polluted(c.zh_auto) for c in cues)
+    ):
+        files = [
+            name
+            for name in files
+            if name.endswith((".jsonl", ".ja.txt", ".ja.srt", ".ja.vtt", ".ja.ass", ".ja.lrc"))
+        ]
     return files
 
 

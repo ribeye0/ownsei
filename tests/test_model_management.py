@@ -33,7 +33,7 @@ def install_receipt(name):
     metadata = {
         "repo": models.REGISTRY[name][0],
         "revision": models.REGISTRY[name][1],
-        "sha256": {filename: file_hash(path / filename)},
+        "sha256": {p.name: file_hash(p) for p in path.iterdir() if p.is_file()},
     }
     if name in models.WHISPER_CONVERSIONS:
         metadata["conversion"] = models.WHISPER_CONVERSION_CONFIG
@@ -67,23 +67,6 @@ def job(name, **changes):
     return state
 
 
-def test_catalog_uses_pinned_sources_and_distinguishes_runtime_and_dependencies(local):
-    install_receipt("whisper-ja-760m")
-    install_receipt("cohere-asr-ja")
-    loader = local / ".tools/cohere-source/cohere_asr.py"
-    loader.parent.mkdir(parents=True)
-    loader.touch()
-    entries = {v["id"]: v for v in manager.catalog()["models"]}
-    assert entries["whisper-ja-760m"]["ready"]
-    assert not entries["cohere-asr-ja"]["ready"] and entries["cohere-asr-ja"]["dependencies"] == ["aligner"]
-    install_receipt("aligner")
-    assert next(v for v in manager.catalog()["models"] if v["id"] == "cohere-asr-ja")["ready"]
-    path = models.model_dir("whisper-ja-760m")
-    (path / "tokenizer.json").unlink()
-    assert not manager.installed("whisper-ja-760m")
-    assert manager.catalog()["basic"] == ["whisper-ja-760m", "index-translate-9b"]
-
-
 def test_hub_progress_reports_real_byte_counters_and_dynamic_totals():
     events = []
     bar = models.progress_bar(events.append)
@@ -109,45 +92,26 @@ def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
     manager.worker("whisper-ja-760m", state["id"])
     assert events == ["runtime", "download", "verify"]
     assert manager.read_job("whisper-ja-760m")["status"] == "completed"
-    state = job("index-translate-2b")
+    state = job("index-translate-9b")
     monkeypatch.setattr(models, "prepare", lambda *_: (_ for _ in ()).throw(RuntimeError("network failure")))
-    manager.worker("index-translate-2b", state["id"])
-    assert manager.read_job("index-translate-2b")["error"] == "network failure"
-
-
-def test_downloads_add_cohere_dependency_and_do_not_launch_duplicates(local, monkeypatch):
-    launched = []
-
-    class Process:
-        def __init__(self, args, **kwargs):
-            launched.append(args)
-
-        def wait(self):
-            return 0
-
-    monkeypatch.setattr(manager.subprocess, "Popen", Process)
-    states = manager.start_download(["cohere-asr-ja", "cohere-asr-ja"])
-    assert [s["model"] for s in states] == ["aligner", "cohere-asr-ja"] and len(launched) == 2
-    manager.start_download(["cohere-asr-ja"])
-    assert len(launched) == 2
-    with pytest.raises(ValueError):
-        manager.start_download(["../../outside"])
+    manager.worker("index-translate-9b", state["id"])
+    assert manager.read_job("index-translate-9b")["error"] == "network failure"
 
 
 def test_cancelled_bootstrap_cannot_start_and_late_progress_cannot_revive_it(local, monkeypatch):
-    state = job("index-translate-2b")
-    manager.cancel_download("index-translate-2b")
+    state = job("index-translate-9b")
+    manager.cancel_download("index-translate-9b")
     monkeypatch.setattr(models, "prepare", lambda *_: pytest.fail("cancelled job started"))
-    manager.worker("index-translate-2b", state["id"])
-    assert manager.read_job("index-translate-2b")["status"] == "cancelled"
+    manager.worker("index-translate-9b", state["id"])
+    assert manager.read_job("index-translate-9b")["status"] == "cancelled"
     state.update(status="running")
-    atomic_json(manager.paths("index-translate-2b")[1], state)
-    assert manager.read_job("index-translate-2b")["status"] == "cancelled"
+    atomic_json(manager.paths("index-translate-9b")[1], state)
+    assert manager.read_job("index-translate-9b")["status"] == "cancelled"
 
 
 def test_dead_worker_marked_interrupted_and_invalid_identity_rejected(local):
-    job("index-translate-2b", status="running", pid=99999999, process_identity="no-such-process")
-    assert manager.read_job("index-translate-2b")["status"] == "interrupted"
+    job("index-translate-9b", status="running", pid=99999999, process_identity="no-such-process")
+    assert manager.read_job("index-translate-9b")["status"] == "interrupted"
     with pytest.raises(ValueError):
         manager.read_job("../outside")
 
@@ -171,26 +135,26 @@ def test_delete_removes_only_model_and_its_source_and_preserves_runtime_and_work
 
 @pytest.mark.parametrize("lock", ["gpu.lock", "model-operation.lock"])
 def test_delete_refuses_busy_and_symlink_paths(local, lock):
-    path = install_receipt("index-translate-2b")
+    path = install_receipt("index-translate-9b")
     with FileLock(manager.STATE / lock):
         with pytest.raises(ConflictError):
-            manager.delete_model("index-translate-2b")
+            manager.delete_model("index-translate-9b")
     assert path.exists()
-    manager.delete_model("index-translate-2b")
+    manager.delete_model("index-translate-9b")
     external = local / "external"
     external.mkdir()
     (external / "keep").touch()
     path.symlink_to(external, target_is_directory=True)
     with pytest.raises(ValueError):
-        manager.delete_model("index-translate-2b")
+        manager.delete_model("index-translate-9b")
     assert (external / "keep").exists()
 
 
 def test_queued_preparation_blocks_delete(local):
-    path = install_receipt("index-translate-2b")
-    job("index-translate-2b")
+    path = install_receipt("index-translate-9b")
+    job("index-translate-9b")
     with pytest.raises(ConflictError):
-        manager.delete_model("index-translate-2b")
+        manager.delete_model("index-translate-9b")
     assert path.exists()
 
 
@@ -222,42 +186,27 @@ def test_model_routes_and_same_origin_guard(local, monkeypatch):
     assert (
         client.post(
             "/api/models/download",
-            json={"models": ["index-translate-2b"]},
+            json={"models": ["index-translate-9b"]},
             headers={"Origin": "https://evil.example"},
         ).status_code
         == 403
     )
-    install_receipt("index-translate-2b")
-    assert client.delete("/api/models/index-translate-2b").status_code == 200
-    assert client.get("/api/models/index-translate-2b/log").json() == {"text": ""}
-
-
-def test_corrupt_receipt_triggers_repair_not_reuse(local, monkeypatch):
-    path = install_receipt("hy-mt2-1.8b")
-    (path / models.GGUF["hy-mt2-1.8b"]).write_bytes(b"corrupt")
-    fetched = []
-
-    def download(**kwargs):
-        fetched.append(kwargs)
-        (path / models.GGUF["hy-mt2-1.8b"]).write_bytes(b"repaired")
-
-    monkeypatch.setattr(models, "snapshot_download", download)
-    assert models.prepare("hy-mt2-1.8b") == path
-    assert fetched[0]["force_download"] is True
-    assert models.check_manifest("hy-mt2-1.8b")
+    install_receipt("index-translate-9b")
+    assert client.delete("/api/models/index-translate-9b").status_code == 200
+    assert client.get("/api/models/index-translate-9b/log").json() == {"text": ""}
 
 
 def test_full_log_download_is_untruncated_and_view_strips_terminal_controls(local):
     import onsei.api as api
 
-    state = job("index-translate-2b", status="completed")
-    file = manager.paths("index-translate-2b")[0] / (state["id"] + ".log")
+    state = job("index-translate-9b", status="completed")
+    file = manager.paths("index-translate-9b")[0] / (state["id"] + ".log")
     content = "first line\n" + "x" * 210000 + "\x1b[1A\rprogress complete\n"
     file.write_text(content)
     client = TestClient(api.app, base_url="http://127.0.0.1")
-    view = client.get("/api/models/index-translate-2b/log").json()["text"]
+    view = client.get("/api/models/index-translate-9b/log").json()["text"]
     assert "first line" not in view and "\x1b" not in view and "progress complete" in view
-    full = client.get("/api/models/index-translate-2b/log/download")
+    full = client.get("/api/models/index-translate-9b/log/download")
     assert full.status_code == 200 and full.text == content
 
 
@@ -266,3 +215,34 @@ def test_partial_runtime_is_never_advertised_as_ready(local):
     atomic_json(manager.STATE / "whisper/onsei-runtime-installing.json", {"lock_sha256": "unfinished"})
     model = next(m for m in manager.catalog()["models"] if m["id"] == "whisper-ja-760m")
     assert model["installed"] and not model["runtime_ready"] and not model["ready"]
+
+
+def test_model_delete_respects_original_lock_through_shared_symlink(local, monkeypatch):
+    original = local / "original"
+    original.mkdir()
+    manager.STATE.mkdir(parents=True, exist_ok=True)
+    (manager.STATE / "gpu.lock").symlink_to(original / "gpu.lock")
+    path = install_receipt("whisper-ja-760m")
+    monkeypatch.setattr(manager, "tasks_pending", lambda: False)
+    with FileLock(original / "gpu.lock"):
+        with pytest.raises(ConflictError):
+            manager.delete_model("whisper-ja-760m")
+    assert path.exists()
+
+
+def test_catalog_and_preparation_share_receipt_validation(local, monkeypatch):
+    name = "index-translate-9b"
+    path = install_receipt(name)
+    # Fast inventory cannot treat an arbitrary receipt hash as the pinned model.
+    assert not manager.installed(name)
+    receipt = json.loads((path / "onsei-model.json").read_text())
+    receipt["sha256"][models.GGUF[name]] = models.GGUF_SHA256[name]
+    atomic_json(path / "onsei-model.json", receipt)
+    assert manager.installed(name)
+    assert not models.check_manifest(name)
+    # Polling must never hash multi-GB files, even after refreshing the catalog.
+    monkeypatch.setattr(models, "file_hash", lambda _: pytest.fail("inventory reread weights"))
+    assert manager.installed(name)
+    for invalid in [[], None, {**receipt, "sha256": []}, {**receipt, "sha256": {"../escape": "a"}}]:
+        atomic_json(path / "onsei-model.json", invalid)
+        assert not manager.installed(name)

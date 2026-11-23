@@ -31,14 +31,20 @@ def location_candidates(store, location):
     tracks = [t.id for t in store.tracks()]
     versions = [v["version"] for v in store.transcript_versions(location["track"])]
     translations = [v["id"] for v in store.translation_versions(location["track"], location["transcript"])]
-    cues = [c.id for c in store.cues(location["track"], location["transcript"])] if location["transcript"] else []
+    cues = (
+        [c.id for c in store.cues(location["track"], location["transcript"])]
+        if location["transcript"]
+        else []
+    )
     return [tracks, versions, translations, cues]
 
 
 def compact_location(store, location, projects):
     candidates = [projects, *location_candidates(store, location)]
-    pieces = [unique_prefix(location[k], pool) for k, pool in zip(
-        ("project", "track", "transcript", "translation", "cue"), candidates)]
+    pieces = [
+        unique_prefix(location[k], pool)
+        for k, pool in zip(("project", "track", "transcript", "translation", "cue"), candidates)
+    ]
     if location["cue"]:
         cues = store.cues(location["track"], location["transcript"])
         cue = next(c for c in cues if c.id == location["cue"])
@@ -60,8 +66,12 @@ def resolve_location(code, projects, open_project):
     location = {"project": project, "track": resolve_prefix(pieces[2], [t.id for t in store.tracks()])}
     if not location["track"]:
         raise ValueError("Invalid track code")
-    location["transcript"] = resolve_prefix(pieces[3], [v["version"] for v in store.transcript_versions(location["track"])])
-    location["translation"] = resolve_prefix(pieces[4], [v["id"] for v in store.translation_versions(location["track"], location["transcript"])])
+    location["transcript"] = resolve_prefix(
+        pieces[3], [v["version"] for v in store.transcript_versions(location["track"])]
+    )
+    location["translation"] = resolve_prefix(
+        pieces[4], [v["id"] for v in store.translation_versions(location["track"], location["transcript"])]
+    )
     cues = store.cues(location["track"], location["transcript"])
     if pieces[5].startswith("@"):
         number = pieces[5][1:]

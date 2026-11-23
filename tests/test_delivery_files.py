@@ -240,3 +240,58 @@ def test_legacy_download_also_uses_original_audio_name(store, monkeypatch):
     assert response.status_code == 200
     filename = unquote(response.headers["content-disposition"].split("utf-8''")[1])
     assert filename == Path(store.track("track").source).with_suffix(".vtt").name
+
+
+@pytest.mark.parametrize(
+    "language,text", [("ja", "お帰り"), ("zh", "歡迎回來"), ("bilingual", "お帰り\n歡迎回來")]
+)
+@pytest.mark.parametrize("kind", ["ass", "lrc"])
+def test_ass_and_lrc_support_each_selected_language(store, language, text, kind):
+    import pysubs2
+
+    result = prepare_delivery(store, [selection(store)], [language], [kind])
+    assert result["tracks"][0]["error"] is None
+    assert result["files"] == [Path(store.track("track").source).with_suffix("." + kind).name]
+    path, _ = delivery_file(store, result["id"], 0)
+    if kind == "ass":
+        subtitles = pysubs2.load(str(path))
+        assert len(subtitles) == 1
+        assert subtitles[0].plaintext == text
+        assert (subtitles[0].start, subtitles[0].end) == (100, 1100)
+    else:
+        assert path.read_text() == "[00:00.10]" + text.replace("\n", " / ") + "\n"
+    assert not list((store.path / "exports" / ".downloads").rglob("*.md"))
+
+
+def test_lrc_simplified_conversion_and_local_publish(store):
+    result = prepare_delivery(store, [selection(store)], ["zh"], ["lrc"], "zh-Hans", destination="sub")
+    target = (
+        Path(store.track("track").source).parent
+        / "sub"
+        / Path(store.track("track").source).with_suffix(".lrc").name
+    )
+    assert result["tracks"][0]["written"] == [str(target)]
+    assert target.read_text() == "[00:00.10]欢迎回来\n"
+
+
+def test_lrc_timestamp_carries_minutes_and_preserves_long_recordings():
+    from onsei.export import write_lrc
+    from onsei.webvtt import VttCue
+
+    assert (
+        write_lrc(
+            [
+                VttCue(3661234, 3662000, " 長音軌 "),
+                VttCue(59995, 61000, "日文\n中文"),
+                VttCue(0, 100, " \n "),
+                VttCue(4, 100, "開頭"),
+            ]
+        )
+        == "[00:00.00]開頭\n[01:00.00]日文 / 中文\n[61:01.23]長音軌\n"
+    )
+
+
+@pytest.mark.parametrize("kind", ["md", "timed.md"])
+def test_removed_markdown_formats_are_rejected(store, kind):
+    with pytest.raises(ValueError, match="不支援的匯出選項"):
+        prepare_delivery(store, [selection(store)], ["bilingual"], [kind])

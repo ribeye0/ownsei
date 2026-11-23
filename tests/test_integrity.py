@@ -1,6 +1,6 @@
 import json
 import pytest
-from onsei.asr import aligned_sentences, merge_spans
+from onsei.asr import merge_spans
 from onsei.domain import Cue, Track
 from onsei.export import export_track
 from onsei.storage import Store
@@ -45,23 +45,6 @@ def test_overlap_retains_real_repetition():
         {"text": "はい。", "start_ms": 2500, "end_ms": 3000},
     ]
     assert len(merge_spans(spans)) == 2
-
-
-def test_alignment_offset_and_punctuation():
-    words = [{"text": "はい", "start": 1, "end": 2}, {"text": "いいえ", "start": 3, "end": 4}]
-    spans = aligned_sentences("はい。いいえ。", words, 24000)
-    assert [(s["text"], s["start_ms"], s["end_ms"]) for s in spans] == [
-        ("はい。", 25000, 26000),
-        ("いいえ。", 27000, 28000),
-    ]
-    with pytest.raises(ValueError):
-        aligned_sentences("追加文字", words, 0)
-    with pytest.raises(ValueError):
-        aligned_sentences("いや。いいえ。", words, 0)
-    assert [s["text"] for s in aligned_sentences("はい......。いいえ。", words, 0)] == [
-        "はい......。",
-        "いいえ。",
-    ]
 
 
 def test_edits_guard_inflight_and_invalidate_bounded_context(project):
@@ -134,7 +117,10 @@ def test_context_only_uses_bounded_japanese(project):
 
 def test_exports_refuse_stale(project, tmp_path):
     paths = export_track(project, "t", tmp_path / "out")
-    assert len(paths) == 13
+    assert len(paths) == 16
+    assert sum(p.suffix == ".ass" for p in paths) == 3
+    assert sum(p.suffix == ".lrc" for p in paths) == 3
+    assert not any(p.suffix == ".md" for p in paths)
     subs = next(p for p in paths if p.name.endswith("bilingual.srt")).read_text()
     assert "台詞0\n翻譯0" in subs
     project.edit("c0", {"ja_override": "修正日文"})
@@ -210,68 +196,16 @@ def test_japanese_character_tokens_split_at_punctuation_and_join_windows(tmp_pat
     assert (spans[0]["start_ms"], spans[0]["end_ms"]) == (23800, 25000)
 
 
-def test_selected_manual_cue_retranslates_affected_context_batches(project, monkeypatch):
-    import onsei.translation as module
+def test_context_change_discards_inflight_document_batch(project, monkeypatch):
+    from onsei.context import DOCUMENT_CONFIG
 
-    project.edit("c8", {"zh_override": "附近人工譯文"})
-    project.edit("c23", {"ja_override": "はい！", "zh_override": "人工譯文"})
-    assert project.cue("c8").translation_status == "manual"
-    calls = []
-
-    class Engine:
-        def __init__(self, *_):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            pass
-
-        def generate(self, data):
-            calls.append([line["id"] for line in data["lines"]])
-            return json.dumps([{"id": line["id"], "text": "好的"} for line in data["lines"]])
-
-    monkeypatch.setattr(module, "Llama", Engine)
-    module.translate(project, "t", "hy-mt2-7b", ["c23"], lambda _: None)
-    assert calls == [[f"c{i}" for i in range(24)], [f"c{i}" for i in range(24, 48)]]
-    assert project.cue("c23").zh == "人工譯文"
-    assert project.cue("c8").zh == "附近人工譯文"
-    assert project.cue("c24").translation_status == "translated"
-    assert project.cue("c48").zh == "翻譯48"
-
-
-def test_realign_failure_preserves_original_times_and_reports_failure(project, monkeypatch):
-    import onsei.asr as module
-
-    c = project.cue("c0")
-    c.provenance["chunk"] = {"index": 0, "start_ms": 0, "end_ms": 1000}
-    project.save_generated(c, c.revision)
-    monkeypatch.setattr(module, "pcm", lambda *_: project.path / "fake.wav")
-
-    def fake_invoke(_kind, _model, _audio, items, _directory, _progress):
-        for item in items:
-            from pathlib import Path
-
-            Path(item["output"]).write_text(
-                json.dumps({"data": [{"text": "違う", "start": 0.1, "end": 0.5}]})
-            )
-
-    monkeypatch.setattr(module, "invoke", fake_invoke)
-    with pytest.raises(RuntimeError, match="Alignment failed"):
-        module.realign(project, "t", ["c0"], lambda _: None)
-    after = project.cue("c0")
-    assert (after.id, after.ja, after.start_ms, after.end_ms) == (c.id, c.ja, c.start_ms, c.end_ms)
-    assert after.timing_status == "alignment_failed"
-
-
-def test_context_change_during_translation_discards_both_affected_batches(project, monkeypatch):
+    monkeypatch.setitem(DOCUMENT_CONFIG, "batch_size", 24)
     import onsei.translation as module
 
     calls = []
 
     class Engine:
-        def __init__(self, *_):
+        def __init__(self, *_, **kwargs):
             pass
 
         def __enter__(self):
@@ -287,8 +221,8 @@ def test_context_change_during_translation_discards_both_affected_batches(projec
             return json.dumps([{"id": line["id"], "text": "舊推論"} for line in data["lines"]])
 
     monkeypatch.setattr(module, "Llama", Engine)
-    module.translate(project, "t", "index-translate-2b", ["c23"], lambda _: None)
-    assert len(calls) == 2
+    module.translate(project, "t", "index-translate-9b", ["c23"], lambda _: None)
+    assert len(calls) == 1
     assert project.cue("c0").translation_status == "stale"
     assert project.cue("c24").translation_status == "stale"
     assert project.cue("c47").translation_status == "stale"

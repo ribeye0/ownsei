@@ -5,6 +5,7 @@ from collections import defaultdict
 
 from onsei.domain import Cue, Track
 from onsei.storage import Store, read_cue
+from onsei.versions import timing_metadata
 from onsei.snapshots import result_exports
 from onsei.translation_contract import polluted
 from onsei.translation_runs import run_summary
@@ -47,6 +48,9 @@ def track_view(store: Store, track_id: str) -> dict:
                     "processed_duration_ms": source.get("processed_duration_ms"),
                     "limit_ms": source.get("limit_ms"),
                     "extra_alignment": source.get("extra_alignment", False),
+                    "use_vad": source.get("vad", {}).get("active", False),
+                    **timing_metadata(source),
+                    "vad_fallback": bool(source.get("vad", {}).get("fallback")),
                 }
             )
         translations = []

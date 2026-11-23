@@ -16,14 +16,19 @@ def load_global(path=None):
     if not path.exists():
         return {"revision": 0, "glossary_entries": normalize_entries(DEFAULT_GLOSSARY)}
     value = json.loads(path.read_text(encoding="utf-8"))
-    if (not isinstance(value, dict) or type(value.get("revision")) is not int or value["revision"] < 0
-            or "glossary_entries" not in value):
+    if (
+        not isinstance(value, dict)
+        or type(value.get("revision")) is not int
+        or value["revision"] < 0
+        or "glossary_entries" not in value
+    ):
         raise ValueError("全局術語設定檔格式無效，請檢查 global-preferences.json")
     return {"revision": value["revision"], "glossary_entries": normalize_entries(value["glossary_entries"])}
 
 
 def save_global(entries, revision, path=None):
     from onsei.storage import ConflictError
+
     entries = normalize_entries(entries)
     path = Path(path or GLOBAL_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)

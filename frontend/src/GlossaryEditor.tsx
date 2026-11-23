@@ -15,10 +15,10 @@ export function GlossaryEditor({value, onChange, disabled = false, scope}: {
         }
         setSource(!source); setError("");
     }
-    const heading = scope === "project" ? ui("作品術語表") : ui("全局術語表");
+    const heading = scope === "project" ? ui("專案術語表") : ui("全局術語表");
     return <section className="glossary-editor" aria-label={heading}>
       <div className="glossary-heading"><b>{heading}</b><button disabled={disabled} onClick={switchMode}>{source ? ui("兩欄編輯") : ui("JSON 原始碼")}</button></div>
-      <p className="muted">{scope === "project" ? ui("勾選的作品術語優先於全局。同名列取消勾選，會在本作品停用該全局術語；刪除此列則恢復沿用全局。") : ui("跨所有作品共用；只將原文涉及的已啟用用詞提供給模型。中文會依目標語言轉換繁簡。")}</p>
+      <p className="muted">{scope === "project" ? ui("勾選的專案術語優先於全局。同名列取消勾選，會在本專案停用該全局術語；刪除此列則恢復沿用全局。") : ui("跨所有專案共用；只將原文涉及的已啟用用詞提供給模型。中文會依目標語言轉換繁簡。")}</p>
       <p className="muted">{ui("日文術語支援平假名／片假名等價比對；漢字、不同詞形須另列。若分別設定不同譯名，優先使用與原文相同的字形。")}</p>
       {source ? <label>{ui("術語 JSON")}<textarea className="code" rows={10} disabled={disabled} value={value} onChange={e => {onChange(e.target.value); setError("");}}/></label>
       : <><div className="glossary-table"><div className="glossary-row glossary-columns"><span>{ui("啟用")}</span><span>{ui("日文")}</span><span>{ui("中文")}</span><span/></div>

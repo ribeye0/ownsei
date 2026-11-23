@@ -11,7 +11,7 @@ export function issueReport(context: {
 }, options:{full?:boolean;code?:string}={full:true}): string {
   const c = context.cue;
   return [
-    "[Ownsei 問題定位]", `作品：${context.projectTitle}`, `音軌：${context.trackName}`,
+    "[Ownsei 問題定位]", `專案：${context.projectTitle}`, `音軌：${context.trackName}`,
     `轉錄：${context.transcriptLabel}`, `翻譯：${context.translationLabel}`,
     ...(c ? [`句段：#${c.ordinal + 1} · ${(c.start_ms / 1000).toFixed(3)}–${(c.end_ms / 1000).toFixed(3)} 秒`,
       `日文：${c.ja}`, `中文：${c.zh || "（無）"}`] : []),

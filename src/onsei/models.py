@@ -1,88 +1,50 @@
 from __future__ import annotations
-
 import os
 import subprocess
-import urllib.request
-import hashlib
 import json
+import shutil
+import errno
 from pathlib import Path
-
 from filelock import FileLock
-
 from huggingface_hub import snapshot_download
+from onsei.util import ROOT, STATE, atomic_json, file_hash, gpu_lock_path
+from onsei.local_models import LOCAL_GGUFS
+from onsei.local_models import LOCAL_MODELS as LOCAL_MODELS
 
-from onsei.util import ROOT, STATE, atomic_json, file_hash
+from onsei.catalog import (
+    REGISTRY as REGISTRY,
+    SPEECH_FILES as SPEECH_FILES,
+    WHISPER_MODELS as WHISPER_MODELS,
+    NATIVE_TIMING_MODELS as NATIVE_TIMING_MODELS,
+    ASR_MODELS as ASR_MODELS,
+    WHISPER_CONVERSIONS as WHISPER_CONVERSIONS,
+    WHISPER_CONVERSION_CONFIG as WHISPER_CONVERSION_CONFIG,
+    GGUF as GGUF,
+    GGUF_SHA256 as GGUF_SHA256,
+    DEFAULT_ASR as DEFAULT_ASR,
+    DEFAULT_TRANSLATION as DEFAULT_TRANSLATION,
+    DEFAULT_NAMES as DEFAULT_NAMES,
+    MODEL_INFO as MODEL_INFO,
+    TRANSLATION_MODELS as TRANSLATION_MODELS,
+)
 
-REGISTRY = {
-    "qwen3.5-9b-review": (
-        "unsloth/Qwen3.5-9B-GGUF",
-        "3885219b6810b007914f3a7950a8d1b469d598a5",
-        None,
-    ),
-    "whisper-ja-760m": (
-        "efwkjn/faster-whisper-ja-760M",
-        "341201ba3e542985d2ad3f78dafb9c1665535013",
-        "whisper",
-    ),
-    "whisper-ja-anime-v0.3": (
-        "efwkjn/whisper-ja-anime-v0.3",
-        "77edc3f61a06161331b1803252f5987e433dd4a5",
-        "whisper",
-    ),
-    "whisper-ja-1.5b": (
-        "efwkjn/whisper-ja-1.5B",
-        "72c13fb7b6cc2a831780cdd79cd1a829e77bab02",
-        "whisper",
-    ),
-    "cohere-asr-ja": ("efwkjn/cohere-asr-ja", "8f1794e22b802731bdbf8ce53ff08f96a5af2bb4", "cohere"),
-    "aligner": ("Qwen/Qwen3-ForcedAligner-0.6B", "c7cbfc2048c462b0d63a45797104fc9db3ad62b7", "aligner"),
-    "hy-mt2-7b": ("tencent/Hy-MT2-7B-GGUF", "ab8472660ac61fac25f1af43fac2599d52a8a775", None),
-    "hy-mt2-1.8b": ("tencent/Hy-MT2-1.8B-GGUF", "a0c709d9fac510f2c807aa3af52872340dc37a4a", None),
-    "index-translate-9b": (
-        "IndexTeam/Index-Translate-9B-GGUF",
-        "d01404384ba429b93f5f63d43573812d103b5bcd",
-        None,
-    ),
-    "index-translate-2b": (
-        "IndexTeam/Index-Translate-2B-GGUF",
-        "449c9e6457b3632d328c6cbb78ae8e8e0c8059a5",
-        None,
-    ),
-    "asmr-qwen3.5-9b": (
-        "mmis1000/asmr-qwen3.5-9b-zh-tw-gguf-v0.2",
-        "9c40d4deaf8dbfdf32078fe3f85a409e074df72c",
-        None,
-    ),
-}
-WHISPER_MODELS = frozenset(name for name, (_, _, kind) in REGISTRY.items() if kind == "whisper")
-ASR_MODELS = WHISPER_MODELS | {"cohere-asr-ja"}
-# These repositories contain Transformers weights, not ready-to-run CT2 checkpoints.
-WHISPER_CONVERSIONS = {
-    "whisper-ja-anime-v0.3": "dad598343426a1a687fbfae348c2b22265ad2916a61d31a85ea01e28207a446c",
-    "whisper-ja-1.5b": "0bf92cf794ebb2cef2699c24dc71184be6a1ac133cc3c64f228ea08173d0155f",
-}
-WHISPER_CONVERSION_CONFIG = {
-    "pipeline": 1,
-    "ctranslate2": "4.8.2",
-    "transformers": "4.57.6",
-    "quantization": "int8_float16",
-}
-GGUF = {
-    "qwen3.5-9b-review": "Qwen3.5-9B-Q4_K_M.gguf",
-    "hy-mt2-7b": "Hy-MT2-7B-Q4_K_M.gguf",
-    "hy-mt2-1.8b": "Hy-MT2-1.8B-Q6_K.gguf",
-    "index-translate-9b": "Index-Translate-9B.Q4_K_M.gguf",
-    "index-translate-2b": "Index-Translate-2B.Q6_K.gguf",
-    "asmr-qwen3.5-9b": "asmr-qwen3.5-9b-zh-tw-gguf-v0.2-q4_k_m.gguf",
-}
-GGUF_SHA256 = {
-    "qwen3.5-9b-review": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
-    "index-translate-9b": "9cc6758b0007f4cbf42ea3400768cbff91ae74ef8d640e467158348426d33713",
-    "index-translate-2b": "3ec6fa4e5a5efa25620f17ecfce8daec1ec8fb35a53c82b419a6707581a505b9",
-    "asmr-qwen3.5-9b": "63ca1d7fb97a06106ccc4078c3f473059b5aa76b6283d461c43dfc0cc949d378",
-}
-DEFAULT_TRANSLATION = "index-translate-9b"
-DEFAULT_REVIEW = "index-translate-9b"
+
+def dependencies(name):
+    return []
+
+
+def translation_files(name):
+    return model_dir(name) / GGUF[name], None
+
+
+def required_files(name):
+    if name == "firered-vad":
+        return ["model.pth.tar", "cmvn.ark"]
+    if name in SPEECH_FILES:
+        return [SPEECH_FILES[name][0]]
+    if name in WHISPER_MODELS:
+        return ["config.json", "tokenizer.json", "model.bin"]
+    return [GGUF[name]] if name in GGUF else ["config.json"]
 
 
 def model_dir(name: str) -> Path:
@@ -112,15 +74,17 @@ def setup_runtime(kind: str, progress=None) -> None:
     try:
         if (
             (env / "bin/python").exists()
-            and not installing.exists()
-            and json.loads(marker.read_text()) == signature
+            and (not installing.exists())
+            and (json.loads(marker.read_text()) == signature)
         ):
             return
     except (OSError, ValueError):
         pass
+    if env.is_symlink():
+        raise ValueError("共用執行環境版本不同；請先移除新版環境連結，再重新準備模型")
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "runtime_wait", message=f"準備 {kind} 執行環境；等待目前的 GPU 任務完成")
-    with FileLock(STATE / "runtime-install.lock"), FileLock(STATE / "gpu.lock"):
+    with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(STATE)):
         notify(progress, "runtime", message=f"安裝 {kind} 執行環境（套件進度見詳細紀錄）")
         if not (env / "bin/python").exists():
             subprocess.run([str(uv), "venv", "--python", "3.12", str(env)], check=True)
@@ -149,7 +113,7 @@ def progress_bar(progress):
         def refresh(self, *args, **kwargs):
             result = super().refresh(*args, **kwargs)
             if hasattr(self, "n"):
-                if self.unit == "B" and not self.desc.startswith("Downloading"):
+                if self.unit == "B" and (not self.desc.startswith("Downloading")):
                     notify(
                         progress,
                         "download",
@@ -187,26 +151,44 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
     )
 
 
-def check_manifest(name, progress=None):
+def check_manifest(name, progress=None, *, verify=True):
+    """One receipt contract; full hashes on preparation, metadata only for UI polling."""
     directory = model_dir(name)
     try:
         metadata = json.loads((directory / "onsei-model.json").read_text())
+        if not isinstance(metadata, dict):
+            return False
         if metadata.get("repo") != REGISTRY[name][0] or metadata.get("revision") != REGISTRY[name][1]:
             return False
         if name in WHISPER_CONVERSIONS and metadata.get("conversion") != WHISPER_CONVERSION_CONFIG:
             return False
         hashes = metadata.get("sha256", {})
-        if not hashes or (
-            name in GGUF and hashes.get(GGUF[name]) != GGUF_SHA256.get(name, hashes.get(GGUF[name]))
+        if (
+            not isinstance(hashes, dict)
+            or not hashes
+            or (name in GGUF_SHA256 and hashes.get(GGUF[name]) != GGUF_SHA256[name])
         ):
             return False
-        required = (
-            ["config.json", "tokenizer.json", "model.bin"]
-            if name in WHISPER_MODELS
-            else ([GGUF[name]] if name in GGUF else ["config.json"])
-        )
-        if not all((directory / file).is_file() for file in required):
+        required = required_files(name)
+        if name in SPEECH_FILES and hashes.get(SPEECH_FILES[name][0]) != SPEECH_FILES[name][1]:
             return False
+        if name == "firered-vad":
+            from onsei.vad_worker import HASHES
+
+            if any(hashes.get(k) != v for k, v in HASHES.items()):
+                return False
+        if not all(file in hashes and (directory / file).is_file() for file in required):
+            return False
+        if any(
+            not isinstance(filename, str)
+            or Path(filename).name != filename
+            or not isinstance(checksum, str)
+            or not (directory / filename).is_file()
+            for filename, checksum in hashes.items()
+        ):
+            return False
+        if not verify:
+            return True
         notify(progress, "verify", message="校驗已下載檔案", files_done=0, files_total=len(hashes))
         for i, (filename, checksum) in enumerate(hashes.items()):
             path = directory / filename
@@ -229,21 +211,80 @@ def prepare(name: str, progress=None) -> Path:
 
 def _prepare(name, progress):
     repo, revision, kind = REGISTRY[name]
-    if kind:
+    if kind == "speech":
+        from onsei.backend import binary
+
+        binary("speech")
+    elif kind:
         setup_runtime(kind, progress)
+    if name in LOCAL_GGUFS:
+        p = model_dir(name)
+        if check_manifest(name, progress):
+            return p
+        spec = LOCAL_GGUFS[name]
+        candidates = [
+            ROOT / "models/.sources" / name / GGUF[name],
+            ROOT / "artifacts/huggingface" / spec["package"] / GGUF[name],
+        ]
+        source = next((path for path in candidates if path.is_file()), None)
+        if source is None:
+            raise ValueError(f"尚無線上下載；請將 {GGUF[name]} 放到 models/.sources/{name}/，再準備本機模型")
+        notify(progress, "verify", message=f"校驗本機完整 GGUF：{GGUF[name]}")
+        if file_hash(source) != GGUF_SHA256[name]:
+            raise ValueError("Local GGUF checksum mismatch")
+        p.mkdir(parents=True, exist_ok=True)
+        temporary = p / (GGUF[name] + ".tmp")
+        try:
+            temporary.unlink(missing_ok=True)
+            try:
+                os.link(source, temporary)
+            except OSError as error:
+                if error.errno not in (errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP):
+                    raise
+                shutil.copy2(source, temporary)
+            temporary.replace(p / GGUF[name])
+        finally:
+            temporary.unlink(missing_ok=True)
+        atomic_json(
+            p / "onsei-model.json",
+            {
+                "repo": repo,
+                "revision": revision,
+                "file": GGUF[name],
+                "sha256": {GGUF[name]: GGUF_SHA256[name]},
+            },
+        )
+        return p
+    if name == "firered-vad":
+        from onsei.vad_worker import HASHES
+
+        p = model_dir(name)
+        if check_manifest(name, progress):
+            return p
+        download_snapshot(repo, revision, p, ["VAD/model.pth.tar", "VAD/cmvn.ark"], progress)
+        for filename, expected in HASHES.items():
+            source = p / "VAD" / filename
+            if file_hash(source) != expected:
+                raise ValueError("FireRedVAD SHA256 mismatch")
+            source.replace(p / filename)
+        atomic_json(p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": HASHES})
+        return p
+    if name in SPEECH_FILES:
+        p = model_dir(name)
+        if check_manifest(name, progress):
+            return p
+        filename, expected = SPEECH_FILES[name]
+        download_snapshot(repo, revision, p, [filename], progress)
+        notify(progress, "verify", message=f"校驗 {filename}")
+        if file_hash(p / filename) != expected:
+            (p / filename).unlink(missing_ok=True)
+            raise ValueError("speech.cpp model SHA256 mismatch")
+        atomic_json(
+            p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": {filename: expected}}
+        )
+        return p
     if name in WHISPER_CONVERSIONS:
         return prepare_whisper(name, progress)
-    if name == "cohere-asr-ja":
-        source = ROOT / ".tools/cohere-source/cohere_asr.py"
-        source.parent.mkdir(parents=True, exist_ok=True)
-        expected = "c298f88c12138c1ab280ad12891ffb8ce22b4aca4f05bb16a8d006551d42a1ef"
-        if not source.exists() or file_hash(source) != expected:
-            url = "https://huggingface.co/efwkjn/cohere-asr-ja-lite/raw/4c100172298efe8771f10ecccfee6e47a83e77cb/cohere_asr.py"
-            with urllib.request.urlopen(url, timeout=30) as response:
-                data = response.read()
-            if hashlib.sha256(data).hexdigest() != expected:
-                raise ValueError("Cohere inference source hash mismatch")
-            source.write_bytes(data)
     p = model_dir(name)
     if check_manifest(name, progress):
         return p
@@ -263,13 +304,7 @@ def _prepare(name, progress):
         (p / GGUF[name]).unlink(missing_ok=True)
         raise ValueError("Translation model SHA256 mismatch; retry to download the invalid file again")
     atomic_json(
-        p / "onsei-model.json",
-        {
-            "repo": repo,
-            "revision": revision,
-            "file": GGUF.get(name),
-            "sha256": hashes,
-        },
+        p / "onsei-model.json", {"repo": repo, "revision": revision, "file": GGUF.get(name), "sha256": hashes}
     )
     return p
 
@@ -285,10 +320,14 @@ def prepare_whisper(name: str, progress=None) -> Path:
             saved = json.loads(manifest.read_text())
             hashes = saved.get("sha256", {})
             notify(progress, "verify", message="校驗已轉換的 Whisper 檔案")
-            if all(saved.get(k) == v for k, v in expected.items()) and "model.bin" in hashes:
+            if all((saved.get(k) == v for k, v in expected.items())) and "model.bin" in hashes:
                 if all(
-                    Path(f).name == f and (destination / f).is_file() and file_hash(destination / f) == h
-                    for f, h in hashes.items()
+                    (
+                        Path(f).name == f
+                        and (destination / f).is_file()
+                        and (file_hash(destination / f) == h)
+                        for f, h in hashes.items()
+                    )
                 ):
                     return destination
         except (OSError, ValueError, TypeError, AttributeError):
@@ -324,7 +363,10 @@ def prepare_whisper(name: str, progress=None) -> Path:
 
 
 def worker_env(kind: str) -> dict:
+    from onsei.backend import current
+
     env = dict(os.environ)
+    env["ONSEI_WHISPER_DEVICE"] = current()["whisper_device"]
     env.update(
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",

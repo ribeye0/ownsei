@@ -34,6 +34,10 @@ export type TranscriptVersion = {
   model?: string;
   limit_ms?: number | null;
   extra_alignment?: boolean;
+  use_vad?: boolean;
+  segmentation?:{engine:string;settings?:{threshold?:number}};
+  asr_filter?:{settings:{threshold:number};min_overlap:number};
+  vad_fallback?: boolean;
   created_at?: number | null;
   created_at_estimated?: boolean;
 };

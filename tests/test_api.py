@@ -49,28 +49,6 @@ def test_local_project_edit_export_and_origin(tmp_path, monkeypatch):
     assert client.post(f"/api/projects/{p}/jobs", json={"action": "invalid"}).status_code == 422
 
 
-def test_new_translation_models_and_default(tmp_path, monkeypatch):
-    from onsei.models import DEFAULT_TRANSLATION
-
-    monkeypatch.setattr(service, "REGISTRY", tmp_path / "index.db")
-    started = []
-    monkeypatch.setattr(service, "start_job", lambda s, j: started.append(j))
-    client = TestClient(service.app, base_url="http://127.0.0.1")
-    p = client.post("/api/projects", json={"title": "模型測試", "path": str(tmp_path / "p")}).json()["id"]
-    from onsei.domain import Track, Cue
-    store = service.project(p)
-    track = Track(id="t", name="fixture", source="/fake.wav", sha256="h", duration_ms=1000, sample_rate=16000, channels=1)
-    store.save_track(track)
-    store.replace_cues(track, "v", [Cue(id="c", track_id="t", version="v", ordinal=0, start_ms=0, end_ms=900, ja_raw="はい")])
-    for model in ["index-translate-9b", "index-translate-2b", "asmr-qwen3.5-9b"]:
-        result = client.post(f"/api/projects/{p}/jobs", json={"action": "translate", "translation": model})
-        assert result.status_code == 200 and result.json()["options"]["translation"] == model
-    result = client.post(f"/api/projects/{p}/jobs", json={"action": "translate"})
-    assert result.json()["options"]["translation"] == DEFAULT_TRANSLATION == "index-translate-9b"
-    assert len(started) == 4
-    assert client.post(f"/api/projects/{p}/jobs", json={"translation": "unknown"}).status_code == 422
-
-
 def test_all_asr_models_accepted_and_non_asr_rejected(tmp_path, monkeypatch):
     from onsei.models import ASR_MODELS
 
@@ -79,7 +57,18 @@ def test_all_asr_models_accepted_and_non_asr_rejected(tmp_path, monkeypatch):
     client = TestClient(service.app, base_url="http://127.0.0.1")
     p = client.post("/api/projects", json={"title": "ASR", "path": str(tmp_path / "p")}).json()["id"]
     from onsei.domain import Track
-    service.project(p).save_track(Track(id="t", name="fixture", source="/fake.wav", sha256="h", duration_ms=1000, sample_rate=16000, channels=1))
+
+    service.project(p).save_track(
+        Track(
+            id="t",
+            name="fixture",
+            source="/fake.wav",
+            sha256="h",
+            duration_ms=1000,
+            sample_rate=16000,
+            channels=1,
+        )
+    )
     for model in ASR_MODELS:
         result = client.post(f"/api/projects/{p}/jobs", json={"action": "transcribe", "asr": model})
         assert result.status_code == 200 and result.json()["options"]["asr"] == model

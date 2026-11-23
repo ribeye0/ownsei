@@ -4,6 +4,7 @@ import json
 import subprocess
 import wave
 import uuid
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -34,6 +35,35 @@ def probe(path: Path) -> dict:
     }
 
 
+# Only whole folder names that explicitly denote an encoding are interchangeable.
+# Other directory names remain part of the identity (disc, edition, work, etc.).
+_FORMAT_FOLDERS = {"wav", "mp3", "wave", "wav版", "mp3版", "wav音源", "mp3音源", "wav版本", "mp3版本"}
+
+
+def select_audio_variants(paths: list[Path], root: Path) -> tuple[list[Path], int]:
+    groups: dict[tuple[str, ...], list[Path]] = {}
+    for path in paths:
+        parts = path.relative_to(root).parts
+        key = tuple(
+            unicodedata.normalize("NFC", part).casefold()
+            for part in parts[:-1]
+            if part.casefold() not in _FORMAT_FOLDERS
+        ) + (unicodedata.normalize("NFC", path.stem),)
+        groups.setdefault(key, []).append(path)
+    skipped = set()
+    for group in groups.values():
+        wavs = [p for p in group if p.suffix.lower() == ".wav"]
+        mp3s = [p for p in group if p.suffix.lower() == ".mp3"]
+        # Ambiguous groups are deliberately kept rather than guessing a disc/version.
+        if len(wavs) != 1 or not mp3s:
+            continue
+        duration = probe(wavs[0])["duration_ms"]
+        for mp3 in mp3s:
+            if abs(probe(mp3)["duration_ms"] - duration) <= 1000:
+                skipped.add(mp3)
+    return [p for p in paths if p not in skipped], len(skipped)
+
+
 def import_audio(
     store: Store, source: Path, prefer_wav: bool = True, progress: Callable[[dict], None] | None = None
 ) -> list[Track]:
@@ -56,6 +86,7 @@ def _import_audio(store: Store, source: Path, prefer_wav: bool, progress) -> lis
         "added": 0,
         "skipped": 0,
         "cached": 0,
+        "variants_skipped": 0,
         "current_file": "",
     }
 
@@ -75,9 +106,9 @@ def _import_audio(store: Store, source: Path, prefer_wav: bool, progress) -> lis
             key=lambda p: natural_key(str(p)),
         )
     )
-    if prefer_wav:
-        stems = {(p.parent, p.stem) for p in paths if p.suffix.lower() == ".wav"}
-        paths = [p for p in paths if p.suffix.lower() == ".wav" or (p.parent, p.stem) not in stems]
+    if prefer_wav and source.is_dir():
+        paths, variants_skipped = select_audio_variants(paths, source)
+        report("scanning", variants_skipped=variants_skipped)
     sizes = [p.stat().st_size for p in paths]
     report("scanning", files_total=len(paths), bytes_total=sum(sizes))
     cache_path = store.path / "import-checksums.json"

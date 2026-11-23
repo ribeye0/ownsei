@@ -1,56 +1,59 @@
 # Ownsei
 
-本機日語音聲轉錄與中文字幕工具。ASR 與翻譯分開執行，保留日文原稿、翻譯版本及人工校對。
-
-## 環境
-
-Linux amd64、glibc ≥ 2.38、NVIDIA 驅動 ≥ 570.124.06。已在 Arch Linux／RTX 4070 Ti 12 GiB 驗證。
-
-依賴：FFmpeg／ffprobe、curl、tar、Node.js ≥ 22、npm。安裝腳本準備 Python 3.12、uv 0.13.0 及 llama.cpp CUDA 12.8 執行庫，不需 CUDA Toolkit。
+本機日語音聲轉錄、中文翻譯與字幕校訂工具。Python API + React 介面；Haas 使用 speech.cpp，翻譯及人物整理使用 llama.cpp。預設 Haas JA F16 → Index NativeLong 9B。
 
 ## 執行
 
+目前安裝與驗收環境：Linux x86-64、Python 3.12、glibc ≥ 2.38。系統需 FFmpeg、Node.js／npm、Vulkan loader 與 GPU 驅動。檔案選擇器使用 KDialog／Zenity，也可直接填入路徑。
+
 ```sh
 bash scripts/install.sh
+.venv/bin/ownsei models prepare --model haas-ja-v1.0-f16
+.venv/bin/ownsei models prepare --model firered-vad
+.venv/bin/ownsei models prepare --model index-nativelong-9b
 bash scripts/start.sh
 ```
 
-介面：<http://127.0.0.1:8765>。從「模型管理」下載所需模型；安裝主程式不預載權重。
+介面：<http://127.0.0.1:8878/>。可在模型管理中下載基本組合。程式監聽 loopback；`workspace/` 保存專案、版本與任務，`models/` 保存權重。匯入以本機音檔路徑引用，字幕預設保留原音檔名稱。
 
 ```sh
-.venv/bin/ownsei doctor --strict --runtime-check
-.venv/bin/ownsei --help
+.venv/bin/ownsei doctor --strict
+.venv/bin/ownsei models list
+.venv/bin/ownsei init workspace/demo --title demo
+.venv/bin/ownsei import workspace/demo /path/to/audio
+.venv/bin/ownsei run workspace/demo --context 32768
 ```
 
-分步安裝、CLI 及 systemd 設定見 [部署](docs/deployment.md)。服務為本機單使用者設計。
+Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自原生 token。Whisper JA 760M／1.5B 為選用模型，使用 CT2 CPU INT8；CUDA 環境另以 `ownsei runtime whisper-cuda` 準備。翻譯可選 NativeLong、Index Translate、SFT48 Q4_K_M／Q5_K_M，上下文 8K–256K；人物譯名、全局／專案術語與風格指引均可配置。SFT48 目前從本機 GGUF 安裝。
 
-## 模型與功能
-
-| 階段 | 模型 |
-|---|---|
-| ASR | Whisper JA 760M（預設）、1.5B、Anime v0.3、Cohere ASR JA |
-| 翻譯 | Index Translate 9B（預設）、2B、ASMR Qwen3.5 9B、Hy-MT2 1.8B／7B |
-| 時間對齊 | Qwen3 ForcedAligner 0.6B；Whisper 可選，Cohere 必需 |
-
-支援批量處理、繁簡字幕、自訂風格與術語、雙語播放及校對。匯出 VTT／SRT／ASS／TXT／Markdown／JSONL；可下載、打包或寫回音檔目錄。模型來源、revision 與量化設定固定於 [models.py](src/onsei/models.py)，授權見 [第三方資訊](THIRD_PARTY_NOTICES.md)。
+支援單軌／批量處理、取消與恢復任務、雙語回聽及校訂、繁／簡字幕、VTT／SRT／LRC／ASS／JSONL 匯出、ZIP 與寫回音檔目錄。各次轉錄及翻譯獨立保存，人工校訂使用版本檢查避免覆寫。
 
 ## 結構
 
-- `src/onsei/`：FastAPI、SQLite、任務排程、ASR 與翻譯。
-- `frontend/`：React／TypeScript／Vite。
-- `runtimes/`：各推論環境的獨立鎖檔。
-- `workspace/`：作品資料庫、設定、快取與日誌；原音維持匯入路徑。
-- `models/`、`.runtime-envs/`、`.tools/`：本機模型與執行環境，不納入版本庫。
+| 範圍 | 入口與責任 |
+|---|---|
+| 模型 | `catalog.py` 固定來源、版本、校驗與顯示資訊；`models.py` 準備權重與 runtime；`modelmanager.py` 管理下載任務 |
+| 轉錄 | `asr.py` 組織轉錄；`segmentation.py` 切分語音；`speech_worker.py`／`worker.py` 隔離推理 |
+| 翻譯 | `translation_pipeline.py` 管理一次任務；`translation.py` 分批與重試；`inference.py` 管理 llama.cpp；`translation_adapters.py` 組裝 prompt 與解析 |
+| 資料 | `storage.py`／`versions.py`／`translation_runs.py` 保存專案與結果；`snapshots.py` 驗證來源版本 |
+| 引擎 | `backend.py` 負責執行檔、函式庫環境與裝置選擇，與字幕處理邏輯分離 |
+| 介面 | `api.py` 為專案操作入口，`api_system.py` 為環境與模型 API；`frontend/src/` 保存工作區與共用元件 |
 
-## 開發
+speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。Windows 的程序管理、原生對話框與二進位發行包尚待整合驗收。
+
+CLI 環境設定：`ONSEI_ROOT` 指定資料根目錄；`ONSEI_ASR_DEVICE`、`ONSEI_LLM_DEVICE` 指定 `auto`／`CPU`／對應 GPU ID；`ONSEI_VAD_ENGINE` 指定 `firered`／`silero`／`none`。可用 `ONSEI_SPEECH_BINARY`、`ONSEI_LLM_BINARY` 明確指定引擎。GUI 任務會保存自己的設定。
+
+## 開發與打包
 
 ```sh
 bash scripts/setup.sh
-.venv/bin/pytest -q
-.venv/bin/ruff check src tests scripts
-(cd frontend && npm ci && npm run test:player && npm run build)
+(cd frontend && npm ci)
+bash scripts/check.sh
+.venv/bin/python scripts/package_source.py --output artifacts/release
 ```
 
-版本為 `0.1.0`，CLI 名稱為 `ownsei`。更新前停止服務並備份作品資料，更新後重跑 `scripts/install.sh`。
+`check.sh` 執行靜態檢查、後端與前端測試、前端建置、原始碼檔案檢查；GitHub Actions 使用相同入口。前端開發伺服器以 `npm run dev` 啟動，API proxy 指向 8878。
 
-授權：[MIT](LICENSE)。第三方模型與依賴使用各自授權。
+原始碼包包含程式、測試、鎖檔、部署腳本、UI 素材與逐檔校驗清單；模型與使用資料獨立保存。
+
+MIT。第三方來源見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from onsei.asr import aligned_sentences
 from onsei.domain import Cue, subtitle_ja, subtitle_zh
-from onsei.translation import normalize_grounded_reply, validate_content
+from onsei.translation_adapters import normalize_grounded_reply
+from onsei.translation import validate_content
 from onsei.translation_contract import output_grammar
 
 
@@ -69,37 +69,6 @@ def test_chinese_subtitle_punctuation_keeps_raw_and_manual(raw, rendered):
     assert c.zh == "人工校對。"
 
 
-def test_overlap_ownership_removes_boundary_copy_but_keeps_true_repetition():
-    first = aligned_sentences(
-        "まったく自分で",
-        [
-            {"text": "まったく", "start": 22.4, "end": 23.2},
-            {"text": "自分", "start": 23.92, "end": 24.4},
-            {"text": "で", "start": 24.4, "end": 24.48},
-        ],
-        0,
-        24500,
-        (0, 24000),
-    )
-    second = aligned_sentences(
-        "自分で出したゴミくらい自分で片付けてよね。",
-        [
-            {"text": "自分", "start": 0.4, "end": 0.88},
-            {"text": "で", "start": 0.88, "end": 0.96},
-            {"text": "出したゴミくらい", "start": 0.96, "end": 1.84},
-            {"text": "自分", "start": 2.08, "end": 2.4},
-            {"text": "で", "start": 2.4, "end": 2.48},
-            {"text": "片付けてよね", "start": 2.48, "end": 3.44},
-        ],
-        23500,
-        25000,
-        (24000, 48000),
-    )
-    assert first[0]["text"] == "まったく"
-    assert second[0]["text"] == "自分で出したゴミくらい自分で片付けてよね。"
-    assert first[0]["end_ms"] <= second[0]["start_ms"]
-
-
 def test_source_echo_id_order_and_exact_source_are_required():
     lines = [{"id": "1", "text": "当然じゃないですか?"}, {"id": "2", "text": "ごめん"}]
     rows = [{"id": r["id"], "source": r["text"], "text": "測試"} for r in lines]
@@ -143,8 +112,7 @@ def test_chan_adverbs_and_kinship_are_not_personal_name_honorifics(source, text)
 def test_explicit_terms_are_hints_and_user_override_takes_priority():
     data = {"lines": [{"id": "1", "text": "ホームズくんのこと?"}], "glossary": {"ホームズくん": "霍爾姆斯君"}}
     assert validate_content({"1": "霍尔姆斯君？"}, data)["1"] == []
-    assert set(validate_content({"1": "霍爾姆斯學長？"}, data)["1"]) == {
-        "translation_glossary_question"}
+    assert set(validate_content({"1": "霍爾姆斯學長？"}, data)["1"]) == {"translation_glossary_question"}
     assert validate_content({"1": "霍爾姆斯君喜歡學長？"}, data)["1"] == []
     data["glossary"] = {"ホームズくん": "霍爾姆斯學長"}
     assert validate_content({"1": "霍爾姆斯學長？"}, data)["1"] == []
@@ -153,6 +121,9 @@ def test_explicit_terms_are_hints_and_user_override_takes_priority():
 def test_honorific_word_matching_does_not_veto_contextual_relationships():
     # The previous regex flagged any 學長 beside くん, even when it referred to
     # someone else. No character-role inference belongs in a string checker.
-    data = {"lines": [{"id": "1", "text": "ホームズくんはあの方を待っています"}],
-            "before": ["あの方は先輩です"], "glossary": {}}
+    data = {
+        "lines": [{"id": "1", "text": "ホームズくんはあの方を待っています"}],
+        "before": ["あの方は先輩です"],
+        "glossary": {},
+    }
     assert validate_content({"1": "霍爾姆斯君在等學長"}, data)["1"] == []

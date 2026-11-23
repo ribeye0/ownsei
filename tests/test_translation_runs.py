@@ -10,27 +10,27 @@ from onsei.translation_runs import TranslationSession
 @pytest.fixture
 def store(tmp_path):
     s = Store.create(tmp_path / "project", "runs")
-    t = Track(id="t", name="dialogue", source="/fake", sha256="h", duration_ms=10000,
-              sample_rate=16000, channels=1)
+    t = Track(
+        id="t", name="dialogue", source="/fake", sha256="h", duration_ms=10000, sample_rate=16000, channels=1
+    )
     s.save_track(t)
-    s.replace_cues(t, "v", [Cue(id=f"c{i}", track_id="t", version="v", ordinal=i,
-                                start_ms=i * 1000, end_ms=i * 1000 + 900, ja_raw="はい") for i in range(3)])
+    s.replace_cues(
+        t,
+        "v",
+        [
+            Cue(
+                id=f"c{i}",
+                track_id="t",
+                version="v",
+                ordinal=i,
+                start_ms=i * 1000,
+                end_ms=i * 1000 + 900,
+                ja_raw="はい",
+            )
+            for i in range(3)
+        ],
+    )
     return s
-
-
-def test_generated_writes_stay_in_run_after_view_switch(store):
-    snapshot = store.input_snapshot("t")
-    first = store.new_translation_run(snapshot, "index-translate-9b")
-    session = TranslationSession(store, snapshot, first)
-    cue = session.cues("t")[0]
-    second = store.prepare_translation("t", "asmr-qwen3.5-9b")
-    cue.zh_auto, cue.translation_status = "好的", "translated"
-    assert session.save_generated(cue, cue.revision)
-    assert store.cue(cue.id).zh is None
-    store.activate_translation("t", first)
-    assert store.cue(cue.id).zh == "好的"
-    assert store.run_metadata(first)["stage"] == "draft"
-    assert second != first
 
 
 def test_new_source_or_human_edit_cannot_be_overwritten(store):
@@ -66,11 +66,12 @@ def test_review_clones_manual_and_survives_parent_deletion(store):
 
 def test_schema_backup_is_valid_and_checkpoint_checks_source(store):
     import sqlite3
-    assert (store.path / 'project-before-translation-runs.db').exists()
-    with sqlite3.connect(store.path / 'project-before-translation-runs.db') as db:
-        assert db.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+
+    assert (store.path / "project-before-translation-runs.db").exists()
+    with sqlite3.connect(store.path / "project-before-translation-runs.db") as db:
+        assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     snap = store.input_snapshot("t")
     run = store.new_translation_run(snap, "index-translate-9b", identity="task-run")
     assert store.new_translation_run(snap, "index-translate-9b", identity="task-run") == run
     with store.db() as db:
-        assert json.loads(db.execute('SELECT payload FROM translation_runs').fetchone()[0])['coverage'] == []
+        assert json.loads(db.execute("SELECT payload FROM translation_runs").fetchone()[0])["coverage"] == []

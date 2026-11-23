@@ -33,8 +33,24 @@ def removal_scope(store, identity, workspace):
         for track in store.tracks():
             if Path(track.source).resolve().is_relative_to(store.path):
                 raise ValueError("原始音檔位於工作目錄內，已阻止永久刪除；請先移出原音")
-        allowed = {"project.db", "project.db-wal", "project.db-shm", "cache", "audio", "exports", "logs", "trash", "import-checksums.json"}
-        unknown = [p.name for p in store.path.iterdir() if p.name not in allowed and not (p.name.startswith(".") and p.name.endswith(".lock")) and not (p.name.startswith("project-before-") and p.suffix == ".db")]
+        allowed = {
+            "project.db",
+            "project.db-wal",
+            "project.db-shm",
+            "cache",
+            "audio",
+            "exports",
+            "logs",
+            "trash",
+            "import-checksums.json",
+        }
+        unknown = [
+            p.name
+            for p in store.path.iterdir()
+            if p.name not in allowed
+            and not (p.name.startswith(".") and p.name.endswith(".lock"))
+            and not (p.name.startswith("project-before-") and p.suffix == ".db")
+        ]
         if unknown:
             raise ValueError("工作目錄包含其他檔案，已阻止永久刪除：" + ", ".join(unknown[:5]))
     return "workspace" if owned else "registration"

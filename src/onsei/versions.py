@@ -20,6 +20,17 @@ from onsei.translation_runs import TranslationRuns, run_summary
 ZH_FIELDS = ("zh_auto", "zh_override", "translation_status")
 
 
+def timing_metadata(source):
+    legacy = source.get("prototype_run", {})
+    return {
+        "asr_filter": source.get("vad", {}).get("settings"),
+        "segmentation": source.get("segmentation")
+        or (
+            {"engine": legacy["vad"], "settings": legacy.get("vad_config", {})} if legacy.get("vad") else None
+        ),
+    }
+
+
 class VersionStore(TranslationRuns):
     def migrate_versions(self):
         with self.db() as db:
@@ -89,7 +100,9 @@ class VersionStore(TranslationRuns):
                         db.backup(target)
                     temporary.replace(backup)
                 db.execute("BEGIN IMMEDIATE")
-                db.execute("CREATE TABLE IF NOT EXISTS translation_runs(result_id TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+                db.execute(
+                    "CREATE TABLE IF NOT EXISTS translation_runs(result_id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+                )
                 db.execute("PRAGMA user_version=4")
 
     def transcript_versions(self, track_id):
@@ -115,6 +128,9 @@ class VersionStore(TranslationRuns):
                     "processed_duration_ms": source.get("processed_duration_ms"),
                     "limit_ms": source.get("limit_ms"),
                     "extra_alignment": source.get("extra_alignment", False),
+                    "use_vad": source.get("vad", {}).get("active", False),
+                    **timing_metadata(source),
+                    "vad_fallback": bool(source.get("vad", {}).get("fallback")),
                 }
             )
         return results
@@ -133,6 +149,7 @@ class VersionStore(TranslationRuns):
             "translation": cue.provenance.get("translation"),
             "translation_flags": [f for f in cue.review_flags if f.startswith("translation_")],
             "review": cue.provenance.get("review"),
+            "training": cue.provenance.get("training"),
         }
 
     def _capture_legacy(self, db, track_id, version, default_model="legacy"):
@@ -220,6 +237,9 @@ class VersionStore(TranslationRuns):
             if value.get("translation"):
                 cue.provenance["translation"] = value["translation"]
             cue.provenance["translation_version"] = active
+            cue.provenance.pop("training", None)
+            if value.get("training"):
+                cue.provenance["training"] = value["training"]
             cue.review_flags += value.get("translation_flags", [])
             if value.get("review"):
                 cue.provenance["review"] = value["review"]
@@ -247,6 +267,9 @@ class VersionStore(TranslationRuns):
             if value.get("translation"):
                 cue.provenance["translation"] = value["translation"]
             cue.provenance["translation_version"] = active
+            cue.provenance.pop("training", None)
+            if value.get("training"):
+                cue.provenance["training"] = value["training"]
             cue.review_flags += value.get("translation_flags", [])
             if value.get("review"):
                 cue.provenance["review"] = value["review"]
@@ -264,6 +287,7 @@ class VersionStore(TranslationRuns):
             base.translation_status = "pending"
             base.provenance.pop("translation", None)
             base.provenance.pop("translation_version", None)
+            base.provenance.pop("training", None)
             base.provenance.pop("review", None)
             base.review_flags = [f for f in base.review_flags if not f.startswith("translation_")]
         db.execute("UPDATE cues SET payload=? WHERE id=?", (base.model_dump_json(), cue.id))
@@ -280,6 +304,54 @@ class VersionStore(TranslationRuns):
                         "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
                         (json.dumps(value, ensure_ascii=False), row[0], cue_id),
                     )
+
+    def _invalidate_document_translations(self, db, track_id, version):
+        # A source edit anywhere can change the interpretation of a distant
+        # line in a document-context result, including inactive result versions.
+        rows = db.execute(
+            """SELECT c.result_id,c.cue_id,c.payload FROM translation_cues c
+            JOIN translation_versions v ON v.id=c.result_id
+            WHERE v.track_id=? AND v.version=?""",
+            (track_id, version),
+        ).fetchall()
+        for result_id, cue_id, raw in rows:
+            value = json.loads(raw)
+            if value.get("zh_override") is None and (value.get("translation") or {}).get("document_key"):
+                value["translation_status"] = "stale"
+                db.execute(
+                    "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
+                    (json.dumps(value, ensure_ascii=False), result_id, cue_id),
+                )
+
+    def _invalidate_history_translations(self, db, result_id, ordinal):
+        """A corrected Chinese reference invalidates its machine-generated descendants."""
+        affected, changed = {str(ordinal + 1)}, []
+        rows = db.execute(
+            """SELECT c.cue_id,c.payload,b.payload FROM translation_cues c
+            JOIN cues b ON b.id=c.cue_id WHERE c.result_id=?
+            ORDER BY json_extract(b.payload,'$.ordinal')""",
+            (result_id,),
+        ).fetchall()
+        for cue_id, raw, source in rows:
+            value = json.loads(raw)
+            references = (value.get("translation") or {}).get("document_history", [])
+            if value.get("zh_override") is None and any(r.get("id") in affected for r in references):
+                value["translation_status"] = "stale"
+                affected.add(str(json.loads(source)["ordinal"] + 1))
+                changed.append(cue_id)
+                db.execute(
+                    "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
+                    (json.dumps(value, ensure_ascii=False), result_id, cue_id),
+                )
+        if changed:
+            metadata = self.run_metadata(result_id, db)
+            metadata.update(
+                status="partial", coverage=[i for i in metadata.get("coverage", []) if i not in changed]
+            )
+            db.execute(
+                "UPDATE translation_runs SET payload=? WHERE result_id=?",
+                (json.dumps(metadata, ensure_ascii=False), result_id),
+            )
 
     def translation_versions(self, track_id, version=None):
         version = version or self.track(track_id).active_version
@@ -393,8 +465,14 @@ class VersionStore(TranslationRuns):
             "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (identity,)
         ).fetchall()
         (directory / "translation.json").write_text(
-            json.dumps({"metadata": list(metadata), "run": self.run_metadata(identity, db),
-                        "cues": [dict(r) for r in rows]}, ensure_ascii=False),
+            json.dumps(
+                {
+                    "metadata": list(metadata),
+                    "run": self.run_metadata(identity, db),
+                    "cues": [dict(r) for r in rows],
+                },
+                ensure_ascii=False,
+            ),
             encoding="utf-8",
         )
 

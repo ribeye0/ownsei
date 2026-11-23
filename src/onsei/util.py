@@ -12,6 +12,20 @@ ROOT = Path(os.environ.get("ONSEI_ROOT", Path(__file__).resolve().parents[2]))
 STATE = ROOT / ".runtime-envs"
 
 
+def gpu_lock_path(state: Path) -> Path:
+    """Resolve an intentionally shared GPU lock before filelock opens it.
+
+    filelock uses O_NOFOLLOW on the final component. Deployments may share this
+    lock through a symlink, so all GPU users must open the same real file. Never
+    replace/unlink it: that could allow two independent locks on different inodes.
+    """
+    path = state / "gpu.lock"
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as error:
+        raise ValueError(f"無法解析 GPU 共用鎖路徑，請檢查符號連結：{path}") from error
+
+
 def digest(data: Any) -> str:
     return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
