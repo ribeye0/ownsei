@@ -38,6 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, help="Use this port (default: first available from 8878)")
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--verbose", action="store_true", help="Show all HTTP requests and server lifecycle logs")
     args = parser.parse_args()
     if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("Invalid port")
@@ -49,9 +50,10 @@ def main():
     if args.port is None and port != DEFAULT_PORT:
         print(f"Port {DEFAULT_PORT} is occupied; using {port}.", flush=True)
     env = {**os.environ, "PYTHONUTF8": "1", "ONSEI_ROOT": str(root)}
-    process = subprocess.Popen(
-        [sys.executable, "-m", "onsei.cli", "serve", "--port", str(port)], cwd=root, env=env
-    )
+    command = [sys.executable, "-m", "onsei.cli", "serve", "--port", str(port)]
+    if args.verbose:
+        command.append("--verbose")
+    process = subprocess.Popen(command, cwd=root, env=env)
     url = f"http://127.0.0.1:{port}/"
     try:
         for _ in range(120):
@@ -65,12 +67,16 @@ def main():
                 time.sleep(0.25)
         else:
             raise RuntimeError("Server did not become ready")
-        print(f"Ownsei: {url}", flush=True)
-        if not args.no_browser:
-            webbrowser.open(url)
+        if not args.no_browser and not webbrowser.open(url):
+            print(f"瀏覽器未開啟，請手動前往 {url}", flush=True)
         raise SystemExit(process.wait())
     except KeyboardInterrupt:
-        pass
+        # The terminal sends Ctrl+C to both processes. Let the backend finish
+        # its shutdown before falling back to termination (forcible on Windows).
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     finally:
         if process.poll() is None:
             process.terminate()

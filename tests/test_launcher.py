@@ -53,3 +53,13 @@ def test_recently_closed_http_connection_does_not_block_restart(launcher):
         connection.close()
         assert client.recv(1) == b""
     assert launcher.select_port(port) == port
+
+
+@pytest.mark.parametrize("status, visible", [(200, False), (206, False), (304, False), (404, True), (500, True)])
+def test_console_access_filter(status, visible):
+    from logging import INFO, LogRecord
+    from onsei.server import HttpFailures
+
+    args = ("127.0.0.1", "GET", "/api/models", "1.1", status)
+    record = LogRecord("uvicorn.access", INFO, __file__, 0, '%s - "%s %s HTTP/%s" %d', args, None)
+    assert HttpFailures().filter(record) is visible

@@ -137,12 +137,16 @@ def run(
 
 
 @app.command()
-def serve(host: str = "127.0.0.1", port: int = 8878):
-    import uvicorn
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8878,
+    verbose: bool = typer.Option(False, "--verbose", help="Show all HTTP requests and server lifecycle logs."),
+):
+    from onsei.server import run_server
 
     if host != "127.0.0.1":
         raise ValueError("Ownsei binds to 127.0.0.1")
-    uvicorn.run("onsei.api:app", host=host, port=port, timeout_graceful_shutdown=3)
+    run_server(host, port, verbose)
 
 
 if __name__ == "__main__":

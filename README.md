@@ -49,7 +49,7 @@ Release 包含建置好的網頁及 speech.cpp／llama.cpp；首次安裝下載 
 
 CUDA 包的翻譯引擎使用 CUDA 13.4，需相容的 NVIDIA 驅動；Haas 仍使用 Vulkan。Vulkan 包適用 NVIDIA／AMD／Intel。模型由介面另行下載。二進位與授權清單見 `release.json`、`manifest.json`、`third_party/`。
 
-發布包依 Linux／Windows 分開提供；各包含對應平台的引擎與啟動檔。啟動器在 8878 被占用時會自動選用其他連接埠並開啟瀏覽器；可用 `--port NUMBER` 指定連接埠。
+發布包依 Linux／Windows 分開提供；各包含對應平台的引擎與啟動檔。啟動器在 8878 被占用時會自動選用其他連接埠並開啟瀏覽器；可用 `--port NUMBER` 指定連接埠。後端視窗顯示服務網址、警告與 HTTP 錯誤。需要查看每次請求時，執行 `bash ownsei.sh --verbose` 或 `Ownsei.cmd --verbose`。
 
 基本模型權重約 6.9 GB，另需 VAD Python 執行環境與下載／安裝暫存；首次準備建議保留 12–15 GiB。準備前會按所在磁碟檢查預估容量，失敗後可重試續傳。
 
