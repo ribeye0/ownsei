@@ -39,7 +39,7 @@ Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自
 | 引擎 | `backend.py` 負責執行檔、函式庫環境與裝置選擇，與字幕處理邏輯分離 |
 | 介面 | `api.py` 為專案操作入口，`api_system.py` 為環境與模型 API；`frontend/src/` 保存工作區與共用元件 |
 
-speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。提供 Linux／Windows x64 的 CUDA 與 Vulkan 發布包。Windows 11 已完成安裝、HTTP、Edge 操作與 AMD Vulkan 推理實測；原生檔案選擇器的完整操作矩陣仍待補測。
+speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。提供 Linux／Windows x64 的 CUDA 與 Vulkan 發布包。Windows 11 已完成安裝、HTTP、原生檔案選擇器、Edge 操作與 AMD Vulkan 推理實測。
 
 CLI 環境設定：`ONSEI_ROOT` 指定資料根目錄；`ONSEI_ASR_DEVICE`、`ONSEI_LLM_DEVICE` 指定 `auto`／`CPU`／對應 GPU ID；`ONSEI_VAD_ENGINE` 指定 `firered`／`silero`／`none`。可用 `ONSEI_SPEECH_BINARY`、`ONSEI_LLM_BINARY` 明確指定引擎。GUI 任務會保存自己的設定。
 

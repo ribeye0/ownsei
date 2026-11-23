@@ -41,10 +41,12 @@ def _run_job(store: Store, job_id: str):
 
     def heartbeat():
         while not heartbeat_stop.wait(2):
-            atomic_json(
-                store.path / "logs" / f"{job_id}.heartbeat.json",
-                {"time": time.time(), "pid": os.getpid(), "identity": job["process_identity"]},
-            )
+            # Windows readers must close their handle before the file is replaced.
+            with FileLock(store.path / "logs/heartbeat.lock"):
+                atomic_json(
+                    store.path / "logs" / f"{job_id}.heartbeat.json",
+                    {"time": time.time(), "pid": os.getpid(), "identity": job["process_identity"]},
+                )
 
     monitor = threading.Thread(target=heartbeat, daemon=True)
     monitor.start()

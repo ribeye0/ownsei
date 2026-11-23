@@ -30,7 +30,7 @@ function Run-Step([string]$Name, [string]$Program, [string[]]$Arguments) {
         $previousPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            & $Program @Arguments 2>&1 | Tee-Object -FilePath $log | Out-Host
+            & $Program @Arguments 2>&1 | Tee-Object -LiteralPath $log | Out-Host
             $code = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousPreference }
         $row.exit_code = $code
@@ -46,7 +46,7 @@ function Run-Step([string]$Name, [string]$Program, [string[]]$Arguments) {
         Save-Report
     }
 }
-Push-Location $root
+Push-Location -LiteralPath $root
 try {
     Save-Report
     Run-Step 'python-version' $python @('--version')
@@ -63,7 +63,7 @@ try {
     )
     $junitReport = Join-Path $output 'pytest.xml'
     Run-Step 'pytest' $python (@('-m', 'pytest', '-ra', '-q', '--junitxml', $junitReport) + $tests)
-    Push-Location (Join-Path $root 'frontend')
+    Push-Location -LiteralPath (Join-Path $root 'frontend')
     try {
         Run-Step 'frontend-tests' 'npm.cmd' @('test')
         Run-Step 'frontend-build' 'npm.cmd' @('run', 'build')
@@ -71,7 +71,7 @@ try {
     $row = [ordered]@{ name = 'powershell-parser'; status = 'running' }
     $report.steps += $row
     try {
-        Get-ChildItem (Join-Path $root 'scripts\*.ps1') | ForEach-Object {
+        Get-ChildItem -LiteralPath (Join-Path $root 'scripts') -Filter '*.ps1' | ForEach-Object {
             $errors = $null
             [void][Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors)
             if ($errors.Count -gt 0) { throw ($errors | Out-String) }

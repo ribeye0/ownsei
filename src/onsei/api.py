@@ -5,7 +5,7 @@ import json
 import sqlite3
 import time
 import uuid
-from filelock import Timeout as LockTimeout
+from filelock import FileLock, Timeout as LockTimeout
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
@@ -416,14 +416,15 @@ def job_snapshot(s: Store):
     recover(s)
     jobs = {j["id"]: j for j in s.jobs()}
     jobs.update({j["id"]: j for j in s.active_jobs()})
-    for job in jobs.values():
-        heartbeat = s.path / "logs" / f"{job['id']}.heartbeat.json"
-        try:
-            value = json.loads(heartbeat.read_text())
-            if value.get("identity") == job.get("process_identity"):
-                job["heartbeat_age_seconds"] = max(0, time.time() - value["time"])
-        except (FileNotFoundError, ValueError, KeyError):
-            pass
+    with FileLock(s.path / "logs/heartbeat.lock"):
+        for job in jobs.values():
+            heartbeat = s.path / "logs" / f"{job['id']}.heartbeat.json"
+            try:
+                value = json.loads(heartbeat.read_text(encoding="utf-8"))
+                if value.get("identity") == job.get("process_identity"):
+                    job["heartbeat_age_seconds"] = max(0, time.time() - value["time"])
+            except (FileNotFoundError, ValueError, KeyError):
+                pass
     result = []
     for job in sorted(jobs.values(), key=lambda j: j["created_at"], reverse=True):
         options = dict(job.get("options", {}))

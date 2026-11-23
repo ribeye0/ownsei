@@ -186,9 +186,11 @@ class Smoke:
                 output.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
                 output.writeframes(b"\0\0" * 48000)
             mp3 = wav.with_suffix(".mp3")
+            ffmpeg = shutil.which("ffmpeg", path=self.env["PATH"])
+            require(ffmpeg is not None, "FFmpeg missing from the release and PATH")
             with (self.output / "ffmpeg.log").open("wb") as log:
                 subprocess.run(
-                    ["ffmpeg", "-nostdin", "-y", "-i", str(wav), str(mp3)],
+                    [ffmpeg, "-nostdin", "-y", "-i", str(wav), str(mp3)],
                     env=self.env,
                     stdout=log,
                     stderr=subprocess.STDOUT,
