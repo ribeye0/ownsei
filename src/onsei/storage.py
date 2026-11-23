@@ -4,7 +4,7 @@ import json
 import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from filelock import FileLock
 
@@ -42,8 +42,8 @@ class Store(VersionStore):
         p.mkdir(parents=True, exist_ok=True)
         if (p / "project.db").exists():
             raise ValueError("Project already exists")
-        db = sqlite3.connect(p / "project.db")
-        db.executescript("""
+        with closing(sqlite3.connect(p / "project.db")) as db, db:
+            db.executescript("""
           PRAGMA journal_mode=WAL;
           CREATE TABLE settings(key TEXT PRIMARY KEY, payload TEXT NOT NULL);
           CREATE TABLE tracks(id TEXT PRIMARY KEY, payload TEXT NOT NULL);
@@ -54,12 +54,10 @@ class Store(VersionStore):
           CREATE TABLE edits(id INTEGER PRIMARY KEY, cue_id TEXT, before TEXT, after TEXT, time REAL);
           PRAGMA user_version=1;
         """)
-        db.execute(
-            "INSERT INTO settings VALUES (?,?)",
-            ("project", json.dumps({"title": title, "glossary": {}, "notes": "", "created_at": time.time()})),
-        )
-        db.commit()
-        db.close()
+            db.execute(
+                "INSERT INTO settings VALUES (?,?)",
+                ("project", json.dumps({"title": title, "glossary": {}, "notes": "", "created_at": time.time()})),
+            )
         return cls(p)
 
     @contextmanager

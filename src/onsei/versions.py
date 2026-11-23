@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from pathlib import Path
 
 from onsei.domain import Cue
@@ -39,7 +40,7 @@ class VersionStore(TranslationRuns):
                     backup = self.path / "project-before-versions.db"
                     if not backup.exists():
                         temporary = backup.with_suffix(".tmp.db")
-                        with sqlite3.connect(temporary) as target:
+                        with closing(sqlite3.connect(temporary)) as target:
                             db.backup(target)
                         temporary.replace(backup)
                 db.execute("BEGIN IMMEDIATE")
@@ -61,7 +62,7 @@ class VersionStore(TranslationRuns):
                 # End the legacy migration transaction before SQLite backup.
                 db.commit()
                 if not backup.exists():
-                    with sqlite3.connect(backup) as target:
+                    with closing(sqlite3.connect(backup)) as target:
                         db.backup(target)
                 db.execute("""CREATE TABLE IF NOT EXISTS transcript_versions(
                     track_id TEXT, version TEXT, created_at REAL, estimated INTEGER,
@@ -96,7 +97,7 @@ class VersionStore(TranslationRuns):
                 backup = self.path / "project-before-translation-runs.db"
                 if not backup.exists():
                     temporary = backup.with_suffix(".tmp.db")
-                    with sqlite3.connect(temporary) as target:
+                    with closing(sqlite3.connect(temporary)) as target:
                         db.backup(target)
                     temporary.replace(backup)
                 db.execute("BEGIN IMMEDIATE")

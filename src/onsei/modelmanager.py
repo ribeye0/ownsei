@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 from filelock import FileLock, Timeout
 from onsei import models
@@ -236,7 +237,7 @@ def tasks_pending():
     index = ROOT / "workspace/index.db"
     if not index.exists():
         return False
-    with sqlite3.connect(index) as db:
+    with closing(sqlite3.connect(index)) as db:
         for (path,) in db.execute("SELECT path FROM projects"):
             if (Path(path) / "project.db").exists() and Store(path).active_jobs():
                 return True
