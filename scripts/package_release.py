@@ -60,12 +60,9 @@ def trim_engine(directory, engine, platform):
         elif platform == "windows":
             keep |= name == "llama-server.exe" or path.suffix.lower() == ".dll"
         else:
-            keep |= name == "llama-server" or (
-                ".so" in name
-                and name.startswith(
-                    ("libggml", "libllama.so", "libllama-common", "libmtmd", "libcublas", "libcudart")
-                )
-            )
+            # The server delegates to libllama-server-impl and can load optional
+            # backends at runtime. Preserve the upstream shared-library set.
+            keep |= name == "llama-server" or ".so" in name
         if not keep:
             path.unlink()
     # Server bundles need only their runtime dependencies, never conversion/CLI tools.

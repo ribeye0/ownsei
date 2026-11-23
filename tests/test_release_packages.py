@@ -46,6 +46,8 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
         (directory / "ownsei-engine.json").write_text("{}")
         if engine == "llama":
             (directory / "unused-converter").write_bytes(b"extra")
+            library = "llama-server-impl.dll" if platform == "windows" else "libllama-server-impl.so"
+            (directory / library).write_bytes(b"server implementation")
 
     monkeypatch.setattr(packaging, "install_engine", install)
     monkeypatch.setattr(packaging.subprocess, "check_output", lambda *a, **k: "a" * 40)
@@ -71,6 +73,7 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
             prefix = manifest_name.removesuffix("manifest.json")
             for name, sha in manifest["files"].items():
                 assert hashlib.sha256(z.extractfile(prefix + name).read()).hexdigest() == sha
+    assert any("llama-server-impl" in n for n in names)
     assert any(n.endswith("/frontend/dist/index.html") for n in names)
     assert not any(
         "/tests/" in n or "/models/" in n or "/frontend/src/" in n or "unused-converter" in n for n in names
