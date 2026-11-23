@@ -35,8 +35,17 @@ _PREVIOUS_DEFAULT_HANT = (
     "字幕句尾不加句號或逗號，保留問號、驚嘆號與必要的省略號。"
 )
 _PREVIOUS_HANT = _PREVIOUS_DEFAULT_HANT.replace("自然、順口。", "自然、順口、簡潔。", 1)
-_PREVIOUS_HANS = SIMPLIFIED_STYLE_INSTRUCTION.replace("自然、顺口。", "自然、顺口、简洁。", 1)
+_PREVIOUS_DEFAULT_HANS = (
+    "将日语角色台词译成适合日式二次元动画字幕的简体中文。让对白像角色当面说出来一样，自然、顺口。"
+    "根据角色在跟谁说话、当下是什么心情，把握自称、称呼和句尾语气，保留原文的礼貌与亲疏。"
+    "遇到结巴、拖长音、停顿或重复，用中文的节奏表现。原文省略主语，中文也说得通时就省略。"
+    "\n原文说得直白，译文就直白，委婉处也保留分寸。用词与称呼以用户的术语和备注为先。"
+    "忠于原意和人物关系，直接对话保留角色口吻，不改写成第三人称旁白。"
+    "字幕句尾不加句号或逗号，保留问号、感叹号和必要的省略号。"
+)
+_PREVIOUS_HANS = _PREVIOUS_DEFAULT_HANS.replace("自然、顺口。", "自然、顺口、简洁。", 1)
 _OLD_TRADITIONAL_STYLES = (
+    _PREVIOUS_DEFAULT_HANT.replace("字幕的繁體中文", "字幕的台灣繁體中文").replace("禮貌與親疏", "親疏"),
     _PREVIOUS_DEFAULT_HANT,
     _PREVIOUS_HANT,
     _PREVIOUS_HANT.replace("\n", "\n\n", 1),
@@ -44,6 +53,7 @@ _OLD_TRADITIONAL_STYLES = (
     _OLD_HANT.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1),
 )
 _OLD_SIMPLIFIED_STYLES = (
+    _PREVIOUS_DEFAULT_HANS,
     _OLD_HANS,
     _PREVIOUS_HANS,
     _PREVIOUS_HANS.replace("\n", "\n\n", 1),
