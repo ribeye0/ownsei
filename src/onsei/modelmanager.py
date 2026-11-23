@@ -75,10 +75,8 @@ def runtime_ready(name):
             return binary("speech").is_file()
         except ValueError:
             return False
-    if kind:
-        return models.venv_python(STATE / kind).is_file() and (
-            not (STATE / kind / "onsei-runtime-installing.json").exists()
-        )
+    if kind == "vad":
+        return models.vad_runtime_ready()
     return llama_binary() is not None
 
 
@@ -103,8 +101,16 @@ def catalog():
                 "basic": name in BASIC,
                 "repo": repo,
                 "revision": revision,
-                "url": f"https://huggingface.co/{repo}/tree/{revision}",
-                "license_url": f"https://huggingface.co/{repo}/blob/{revision}/README.md",
+                "url": (
+                    f"https://github.com/{repo}/tree/{revision}/convert/out"
+                    if kind == "vad"
+                    else f"https://huggingface.co/{repo}/tree/{revision}"
+                ),
+                "license_url": (
+                    "https://github.com/FireRedTeam/FireRedVAD/blob/main/LICENSE"
+                    if kind == "vad"
+                    else f"https://huggingface.co/{repo}/blob/{revision}/README.md"
+                ),
                 "download_bytes_estimate": int(size * 10**9),
                 "vram_estimate": vram,
                 "installed": have,

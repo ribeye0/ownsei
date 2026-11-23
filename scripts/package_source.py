@@ -36,7 +36,6 @@ DIRECTORIES = {
     "scripts": {".py", ".sh", ".ps1", ".bat", ".cmd"},
     ".github/workflows": {".yml", ".yaml"},
 }
-RUNTIMES = ("vad", "vad-windows")
 ASSETS = ("ownsei-logo.png", "ownsei-logo-dark.png")
 SECRETS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
@@ -49,7 +48,6 @@ def source_files(root: Path) -> list[Path]:
     files = [Path(name) for name in ROOT_FILES]
     files += [Path("frontend") / name for name in FRONTEND_FILES]
     files += [Path("frontend/public") / name for name in ASSETS]
-    files += [Path("runtimes") / f"{kind}.{suffix}" for kind in RUNTIMES for suffix in ("in", "lock")]
     for name, suffixes in DIRECTORIES.items():
         files += [
             p.relative_to(root)

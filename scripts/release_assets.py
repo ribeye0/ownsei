@@ -1,6 +1,26 @@
 """Hash-pinned engine inputs shared by installation and release packaging."""
 
 ASSETS = {
+    "kaldi_native_fbank-windows": {
+        "name": "kaldi_native_fbank-1.22.3-cp312-cp312-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/cb/8d/c0b0b6280edabad85d7e15093fad612c027e175fe4e0b960ce2f36485143/kaldi_native_fbank-1.22.3-cp312-cp312-win_amd64.whl",
+        "sha256": "cbbeea19fe6d584c54e93fe6615a7185b10e0d78fdb6471f9e44596018437c38"
+    },
+    "ncnn-windows": {
+        "name": "ncnn-1.0.20261020-cp312-cp312-win_amd64.whl",
+        "url": "https://files.pythonhosted.org/packages/0f/80/abe2603b5061cca5312a098b04e02a2597eb0050789f8a65f71c70a178d4/ncnn-1.0.20261020-cp312-cp312-win_amd64.whl",
+        "sha256": "ea2b804ace61e77e6aedbbb165bf9856ac7aff6c383712dcd53b2914b639d392"
+    },
+    "kaldi_native_fbank-linux": {
+        "name": "kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "sha256": "f16e74372fe9e20abb4183f98a8e2288d5ee4c48d04d94b6160311170e007661"
+    },
+    "ncnn-linux": {
+        "name": "ncnn-1.0.20261020-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+        "url": "https://files.pythonhosted.org/packages/6e/2c/0cd6760551ac7659cbb3e7290489fa125371e3d100ea15eb55ded3d9e3c7/ncnn-1.0.20261020-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl",
+        "sha256": "fe5e25b45554d9cafbcd6ed03160bf91e7b24dfab9160215004142a85572d000"
+    },
     "cuda-linux": {
         "name": "cudart-llama-b11541-bin-ubuntu-cuda-13.4-x64.tar.gz",
         "repo": "ggml-org/llama.cpp",
@@ -70,6 +90,7 @@ def engine_assets(platform, backend):
     if platform not in ("linux", "windows") or backend not in ("cuda", "vulkan"):
         raise ValueError("Expected linux/windows and cuda/vulkan")
     return {
+        "vad": [ASSETS["ncnn-" + platform], ASSETS["kaldi_native_fbank-" + platform]],
         "speech": [ASSETS["speech-" + platform]],
         "llama": [ASSETS[f"llama-{platform}-{backend}"]]
         + ([ASSETS["cuda-" + platform]] if backend == "cuda" else []),

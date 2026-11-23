@@ -20,7 +20,7 @@ def receipt(assets):
 
 
 def extract(archive, target):
-    if archive.suffix == ".zip":
+    if archive.suffix in (".zip", ".whl"):
         with zipfile.ZipFile(archive) as package:
             for member in package.infolist():
                 destination = (target / member.filename).resolve()
@@ -37,17 +37,24 @@ def extract(archive, target):
 
 def install_engine(root, engine, assets, platform, cache):
     from onsei.util import file_hash, atomic_json
+    from onsei.catalog import vad_libraries
 
     target = root / "bin" / engine
     executable = ("speech" if engine == "speech" else "llama-server") + (
         ".exe" if platform == "windows" else ""
     )
+
+    def complete(directory):
+        if engine == "vad":
+            return all((directory / path).is_file() for path in vad_libraries(platform))
+        return next(directory.rglob(executable), None) is not None
+
     expected = receipt(assets)
     marker = target / "ownsei-engine.json"
     if (
         marker.exists()
         and json.loads(marker.read_text()) == expected
-        and next(target.rglob(executable), None)
+        and complete(target)
     ):
         print(engine + ": ready", flush=True)
         return
@@ -69,8 +76,8 @@ def install_engine(root, engine, assets, platform, cache):
                     check=True,
                 )
             extract(archive, staging)
-        if not next(staging.rglob(executable), None):
-            raise ValueError("Missing engine executable: " + executable)
+        if not complete(staging):
+            raise ValueError("Missing engine files: " + engine)
         atomic_json(staging / "ownsei-engine.json", expected)
         previous = target.with_name(engine + ".previous")
         if previous.exists():
@@ -96,6 +103,7 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=["cuda", "vulkan"])
+    parser.add_argument("--engine", choices=("speech", "llama", "vad"))
     args = parser.parse_args()
     profile = json.loads((ROOT / "release.json").read_text()) if (ROOT / "release.json").exists() else {}
     platform = "windows" if sys.platform == "win32" else "linux"
@@ -103,6 +111,8 @@ def main():
     (ROOT / ".runtime-envs").mkdir(exist_ok=True)
     with FileLock(ROOT / ".runtime-envs/engine-install.lock"):
         for engine, assets in engine_assets(platform, backend).items():
+            if args.engine and engine != args.engine:
+                continue
             install_engine(ROOT, engine, assets, platform, ROOT / "downloads")
 
 

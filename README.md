@@ -24,7 +24,7 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 
 | 階段 | 預設做法 | 可以調整的地方 |
 | --- | --- | --- |
-| 語音切分 | FireRedVAD 在 CPU 上找出有人聲的區段，再送入轉錄模型。 | 耳語被切得太碎時可降低門檻，也可換成 Silero VAD 或使用固定時間窗。 |
+| 語音切分 | FireRedVAD 透過 ncnn 在 CPU 上找出有人聲的區段，再送入轉錄模型。 | 耳語被切得太碎時可降低門檻，也可換成 Silero VAD 或使用固定時間窗。 |
 | 日文轉錄 | speech.cpp 執行 Haas JA F16，使用模型輸出的時間戳組成逐字稿。 | 顯存較少時可選 Q8_0。辨識有誤時可先回聽、修正日文，再重譯該段。 |
 | 中文翻譯 | llama.cpp 執行 Index-NativeLong 9B，分批讀入待譯句、前後日文與前批中文。預設上下文容量為 64K。 | 可選繁體或簡體，調整上下文容量（8K–256K）及譯文風格。常用詞可在全局共用，角色名與暱稱可在專案內指定。 |
 
@@ -59,7 +59,7 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 | Windows 10／11 x64 | `ownsei-版本號-windows-x64-vulkan.zip` | 雙擊 `Ownsei.cmd` |
 | Linux x86-64（glibc 2.38 以上） | `ownsei-版本號-linux-x64-vulkan.tar.gz` | 執行 `bash ownsei.sh` |
 
-首次啟動會安裝 Python 環境並開啟瀏覽器。在「模型管理與環境檢查」按 **準備基本組合**，即可下載 FireRedVAD、Haas JA F16 與 NativeLong 9B。首次安裝與下載建議預留 12–15 GiB。Linux 另需 curl、FFmpeg 與 ffprobe。
+首次啟動會安裝 Python 環境並開啟瀏覽器。在「模型管理與環境檢查」按 **準備基本組合**，即可下載 FireRedVAD、Haas JA F16 與 NativeLong 9B。FireRedVAD 的 ncnn CPU 引擎已隨包提供，更新舊版後在模型管理重新準備 FireRedVAD 即可。首次安裝與下載建議預留 12–15 GiB。Linux 另需 curl、FFmpeg 與 ffprobe。
 
 模型與全局設定由同一個系統使用者的各版本共用。
 

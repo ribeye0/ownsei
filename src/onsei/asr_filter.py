@@ -4,9 +4,10 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+import sys
 from onsei.vad_settings import normalize_settings, LIMITS
 from onsei.util import atomic_json, digest
-from onsei.models import model_dir, runtime_python, worker_env
+from onsei.models import model_dir, worker_env
 from onsei.processes import stop_process
 
 
@@ -30,7 +31,7 @@ def normalize_filter(value=None):
         "enabled": enabled,
         "settings": {k: settings[k] for k in LIMITS},
         "min_overlap": float(overlap),
-        "pipeline": 1,
+        "pipeline": 2,
     }
 
 
@@ -71,7 +72,7 @@ def detect_and_filter(audio, directory, duration_ms, spans, options, progress):
             }
         )
         command = [
-            str(runtime_python("vad")),
+            sys.executable,
             "-m",
             "onsei.vad_worker",
             str(audio),

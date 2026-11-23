@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import math
 import subprocess
+import sys
 from onsei import backend
-from onsei.models import model_dir, runtime_python, worker_env, SPEECH_FILES
+from onsei.models import model_dir, worker_env, SPEECH_FILES
 from onsei.processes import stop_process
 from onsei.util import atomic_json, digest
 from onsei.vad_settings import normalize_settings
@@ -57,7 +58,7 @@ def regions(audio, directory, duration_ms, settings, progress):
         )
         if engine == "firered":
             command = [
-                str(runtime_python("vad")),
+                sys.executable,
                 "-m",
                 "onsei.vad_worker",
                 str(audio),

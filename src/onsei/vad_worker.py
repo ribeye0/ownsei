@@ -1,4 +1,4 @@
-"""CPU FireRedVAD analysis for optional Haas cue filtering."""
+"""FireRedVAD ncnn CPU analysis for input segmentation and optional cue filtering."""
 
 from __future__ import annotations
 
@@ -11,13 +11,15 @@ import time
 import wave
 
 from onsei.util import atomic_json as save
-from onsei.user_paths import models_dir
+from onsei.catalog import REGISTRY
 from onsei.vad_settings import normalize_settings
 
-REVISION = "7990aaccc6b7aec1e527743bd30201f2c4a03b8c"
+REVISION = REGISTRY["firered-vad"][1]
 HASHES = {
-    "model.pth.tar": "63f4fb1b00a6b8607c118dd48efc18d5e40d67d99b7bf9aa7a8d61540cf23d71",
-    "cmvn.ark": "c87f6f13edf0f0ec7535ddfc9cc3387d9268cb234b70182d566c5e2edf3ca473",
+    "cmvn_istd.bin": "0f577337a74e728118f323ea6a64d269de85d29d40f4a60b57cabc960ca13add",
+    "cmvn_means.bin": "3c80c1c51be7d363f1d64a1d52687df163f60a060384058a83422a22bd80b5c7",
+    "firered_vad_non_stream.ncnn.bin": "961c27ff99ec8474048e3ba682d4af07315e6ac4638ad1de20675240c36b43ff",
+    "firered_vad_non_stream.ncnn.param": "9e361f9af4d9f94c879c75a91ba594fe612100dddd6d6fa657a748ff70e34704"
 }
 
 CONFIG = normalize_settings("firered")
@@ -97,18 +99,14 @@ def bounded_regions(spans, probabilities, limit_ms=15000):
 def detect(path, model_dir, output, config=None, limit_ms=None):
     config = normalize_settings("firered", config)
     import numpy as np
-    import torch
-    from fireredvad.core.audio_feat import AudioFeat
-    from fireredvad.core.detect_model import DetectModel
+    from onsei.vad_ncnn import Detector
 
     for name, expected in HASHES.items():
         with (model_dir / name).open("rb") as file:
             actual = hashlib.file_digest(file, "sha256").hexdigest()
         if actual != expected:
             raise ValueError(f"FireRedVAD checksum mismatch: {name}")
-    torch.set_num_threads(1)
-    model = DetectModel.from_pretrained(str(model_dir)).cpu().eval()
-    features = AudioFeat(str(model_dir / "cmvn.ark"))
+    detector = Detector(model_dir)
     started = time.monotonic()
     blocks = []
     with wave.open(str(path)) as audio:
@@ -133,10 +131,7 @@ def detect(path, model_dir, output, config=None, limit_ms=None):
             local = np.zeros(max(0, int((len(values) - 400) // 160 + 1)), dtype=np.float32)
             if peak > 1e-5 and len(values) >= 400:
                 pcm = np.clip(np.rint(values * gain), -32768, 32767).astype(np.int16)
-                feat, _ = features.extract(pcm)
-                with torch.inference_mode():
-                    scores, _ = model(feat.unsqueeze(0))
-                local = scores.numpy().reshape(-1)
+                local = detector.probabilities(pcm)
             first = max(0, math.ceil((owned_start - 12.5) / 10))
             last = min(len(probabilities), math.ceil((owned_end - 12.5) / 10))
             offset = round(start / 10)
@@ -162,7 +157,7 @@ def detect(path, model_dir, output, config=None, limit_ms=None):
     np.save(output.with_suffix(".probabilities.npy"), probabilities)
     result = {
         "engine": "FireRedVAD",
-        "runtime": "PyTorch CPU",
+        "runtime": "ncnn CPU",
         "model_revision": REVISION,
         "config": config,
         "duration_seconds": duration / 1000,
@@ -180,11 +175,15 @@ def detect(path, model_dir, output, config=None, limit_ms=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("audio", type=Path)
-    parser.add_argument("--model", type=Path, default=models_dir() / "firered-vad")
+    parser.add_argument("--model", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--settings", type=Path)
     parser.add_argument("--limit-ms", type=int)
     args = parser.parse_args()
+    if args.model is None:
+        from onsei.models import model_dir
+
+        args.model = model_dir("firered-vad")
     detect(
         args.audio,
         args.model,

@@ -47,8 +47,12 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
         executable = ("speech" if engine == "speech" else "llama-server") + (
             ".exe" if platform == "windows" else ""
         )
-        (directory / executable).write_bytes(b"engine")
+        if engine != "vad":
+            (directory / executable).write_bytes(b"engine")
         (directory / "ownsei-engine.json").write_text("{}")
+        if engine == "vad":
+            (directory / "ncnn").mkdir()
+            (directory / "ncnn" / ("native.pyd" if platform == "windows" else "native.so")).touch()
         if engine == "llama":
             (directory / "unused-converter").write_bytes(b"extra")
             library = "llama-server-impl.dll" if platform == "windows" else "libllama-server-impl.so"
@@ -60,8 +64,10 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
     result = packaging.build_release(source, output, target, tmp_path / "cache", tmp_path)
     archive = output / result["file"]
     assert result["sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
-    assert "vulkan" in calls[0][1][0]["name"]  # Haas always Vulkan, even in CUDA bundles.
-    assert ("cuda" in calls[1][1][0]["name"]) == target.endswith("cuda")
+    assets = dict(calls)
+    assert all(a["name"].endswith(".whl") for a in assets["vad"])
+    assert "vulkan" in assets["speech"][0]["name"]  # Haas always Vulkan, even in CUDA bundles.
+    assert ("cuda" in assets["llama"][0]["name"]) == target.endswith("cuda")
     if target.startswith("windows"):
         with zipfile.ZipFile(archive) as z:
             names = z.namelist()
@@ -90,11 +96,11 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
     if target.startswith("linux"):
         assert "ownsei.sh" in contents
         assert "scripts/install.sh" in contents
-        assert "runtimes/vad.lock" in contents
+        assert "bin/vad/ncnn/native.so" in contents
         assert not any(n.endswith((".cmd", ".bat", ".ps1")) or "-windows." in n for n in contents)
     else:
         assert {"Ownsei.cmd", "Install.cmd", "scripts/start.ps1", "scripts/choose_path.ps1"} <= contents
-        assert "runtimes/vad-windows.lock" in contents
+        assert "bin/vad/ncnn/native.pyd" in contents
         assert "runtimes/vad.lock" not in contents
         assert not any(n.endswith(".sh") for n in contents)
 

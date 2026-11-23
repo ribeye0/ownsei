@@ -270,6 +270,8 @@ def transcribe(
         "vad_engine": backend.current()["vad_engine"],
         "vad_settings": filter_options["settings"],
     }
+    if backend.current()["vad_engine"] == "firered":
+        signature["execution"]["vad_revision"] = REGISTRY["firered-vad"][1]
     generation = generation or store.asr_nonce(track_id, model)
     if generation:
         signature["generation"] = generation

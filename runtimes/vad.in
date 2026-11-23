@@ -1,7 +1,0 @@
-torch @ https://download-r2.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp312-cp312-manylinux_2_28_x86_64.whl#sha256=ee40b8a4b4b2cf0670c6fd4f35a7ef23871af956fecb238fbf5da15a72650b1d
-fireredvad @ https://github.com/FireRedTeam/FireRedVAD/archive/c30ec49e8cc69642b0ee65362eba11b9d11c6e54.tar.gz#sha256=26245231ab90d8ccefd7345bc5002e38fb93a078c9970da07d6bfaf491cc67c5
-numpy==2.5.5
-kaldiio==2.18.1
-kaldi-native-fbank==1.22.3
-soundfile==0.13.1
-textgrid==1.6.1

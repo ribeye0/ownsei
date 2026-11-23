@@ -65,22 +65,9 @@ def test_model_route_returns_actionable_storage_error(local, monkeypatch):
     assert not manager.STATE.exists()
 
 
-def test_runtime_capacity_is_checked_before_pip_or_venv(local, monkeypatch):
-    (local / ".tools").mkdir()
-    (local / ".tools/uv").touch()
-    (local / "runtimes").mkdir()
-    (local / "runtimes/vad.lock").write_text("pinned==1")
-    free_space(monkeypatch, 21 * 1024**2)
-    monkeypatch.setattr(models.subprocess, "run", lambda *a, **k: pytest.fail("installation started"))
-    with pytest.raises(diskspace.InsufficientSpace):
-        models.setup_runtime("vad")
-    assert not (models.STATE / "vad/onsei-runtime-installing.json").exists()
-
-
 def test_valid_existing_models_and_runtimes_need_no_download_space(local, monkeypatch):
     free_space(monkeypatch, 0)
     monkeypatch.setattr(models, "check_manifest", lambda *a, **k: True)
-    monkeypatch.setattr(models, "runtime_current", lambda _: True)
     models.check_prepare_space(manager.BASIC)
 
 

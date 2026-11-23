@@ -9,12 +9,14 @@ import threading
 import time
 from pathlib import Path
 from filelock import FileLock
-from onsei.util import ROOT, STATE, atomic_json, file_hash, gpu_lock_path
+from onsei.util import ROOT, STATE, atomic_json, file_hash
 from onsei.user_paths import locks_dir, models_dir
-from onsei.diskspace import GIB, RESERVE, capacity_message, existing_directory, require_space
+from onsei.diskspace import RESERVE, capacity_message, existing_directory, require_space
 
 from onsei.catalog import (
     REGISTRY as REGISTRY,
+    FIRERED_BYTES,
+    vad_libraries,
     SPEECH_FILES as SPEECH_FILES,
     ASR_MODELS as ASR_MODELS,
     GGUF as GGUF,
@@ -33,7 +35,9 @@ def translation_files(name):
 
 def required_files(name):
     if name == "firered-vad":
-        return ["model.pth.tar", "cmvn.ark"]
+        from onsei.vad_worker import HASHES
+
+        return list(HASHES)
     if name in SPEECH_FILES:
         return [SPEECH_FILES[name][0]]
     return [GGUF[name]]
@@ -42,62 +46,20 @@ def required_files(name):
 def model_dir(name: str) -> Path:
     if name not in REGISTRY:
         raise ValueError(f"Unknown model: {name}")
-    return models_dir() / name
+    return models_dir() / ("firered-vad-ncnn" if name == "firered-vad" else name)
 
 
-def venv_python(directory: Path) -> Path:
-    return directory / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
-
-
-def runtime_lock(kind: str) -> Path:
-    suffix = "-windows" if sys.platform == "win32" else ""
-    return ROOT / "runtimes" / f"{kind}{suffix}.lock"
-
-
-def runtime_python(kind: str) -> Path:
-    p = venv_python(STATE / kind)
-    if not p.exists():
-        raise ValueError(f"Runtime {kind} missing; run ownsei models prepare --model ...")
-    return p
-
-
-def runtime_current(kind):
-    env = STATE / kind
-    try:
-        return (
-            venv_python(env).exists()
-            and not (env / "onsei-runtime-installing.json").exists()
-            and json.loads((env / "onsei-runtime.json").read_text())
-            == {"lock_sha256": file_hash(runtime_lock(kind)), "python": "3.12"}
-        )
-    except (OSError, ValueError):
-        return False
-
-
-def runtime_space_requirements(kind):
-    if runtime_current(kind):
-        return []
-    # Include unpacked packages, wheels and build scratch space, not just weights.
-    installed = 2 * GIB
-    if sys.platform == "win32":
-        cache = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "uv/cache"
-    else:
-        cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "uv"
-    cache = Path(os.environ.get("UV_CACHE_DIR", cache))
-    return [(STATE / kind, installed), (cache, GIB)]
+def vad_runtime_ready():
+    directory = ROOT / "bin" / "vad"
+    platform = "windows" if sys.platform == "win32" else "linux"
+    return all((directory / path).is_file() for path in vad_libraries(platform))
 
 
 def check_prepare_space(names):
     requirements = []
-    kinds = set()
     for name in dict.fromkeys(names):
         if not check_manifest(name, verify=False):
             requirements.append((model_dir(name), int(MODEL_INFO[name][4] * 10**9 * 1.15)))
-        kind = REGISTRY[name][2]
-        if kind and kind != "speech":
-            kinds.add(kind)
-    for kind in kinds:
-        requirements.extend(runtime_space_requirements(kind))
     require_space(requirements)
 
 
@@ -110,10 +72,9 @@ def preparation_error(error):
         if no_space:
             return capacity_message(Path(getattr(error, "filename", None) or models_dir()))
         if isinstance(error, subprocess.CalledProcessError) or "writer channel closed" in text.lower():
-            paths = [models_dir(), *[p for p, _ in runtime_space_requirements("vad")]]
-            for path in paths:
-                if shutil.disk_usage(existing_directory(path)).free < RESERVE:
-                    return capacity_message(path)
+            path = models_dir()
+            if shutil.disk_usage(existing_directory(path)).free < RESERVE:
+                return capacity_message(path)
     except OSError:
         # Failure reporting must still work if the filesystem itself is inaccessible.
         if no_space:
@@ -122,36 +83,15 @@ def preparation_error(error):
 
 
 def setup_runtime(kind: str, progress=None) -> None:
-    uv = ROOT / ".tools" / ("uv.exe" if sys.platform == "win32" else "uv")
-    if not uv.exists():
-        raise ValueError("Run scripts/setup.sh first")
-    lock = runtime_lock(kind)
-    if not lock.exists():
-        raise ValueError(f"Missing pinned runtime lock: {lock}")
-    env = STATE / kind
-    marker = env / "onsei-runtime.json"
-    installing = env / "onsei-runtime-installing.json"
-    signature = {"lock_sha256": file_hash(lock), "python": "3.12"}
-    if runtime_current(kind):
-        return
-    if env.is_symlink():
-        raise ValueError("共用執行環境版本不同；請先移除新版環境連結，再重新準備模型")
-    STATE.mkdir(parents=True, exist_ok=True)
-    notify(progress, "runtime_wait", message=f"準備 {kind} 執行環境；等待目前的 GPU 任務完成")
-    with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(locks_dir())):
-        if runtime_current(kind):
-            return
-        require_space(runtime_space_requirements(kind))
-        notify(progress, "runtime", message=f"安裝 {kind} 執行環境（套件進度見詳細紀錄）")
-        if not venv_python(env).exists():
-            subprocess.run([str(uv), "venv", "--python", sys.executable, str(env)], check=True)
-        atomic_json(installing, signature)
-        command = [str(uv), "pip", "sync", "--python", str(venv_python(env)), str(lock)]
-        if (ROOT / ".tools/wheels").exists():
-            command += ["--find-links", str(ROOT / ".tools/wheels")]
-        subprocess.run(command, check=True)
-        atomic_json(marker, signature)
-        installing.unlink(missing_ok=True)
+    if kind != "vad":
+        raise ValueError("Unknown runtime: " + kind)
+    if not vad_runtime_ready():
+        notify(progress, "runtime", message="準備 FireRedVAD ncnn CPU 引擎")
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts/setup_engines.py"), "--engine", "vad"], check=True
+        )
+    if not vad_runtime_ready():
+        raise ValueError("Missing ncnn CPU runtime")
 
 
 def notify(progress, stage, **details):
@@ -333,6 +273,43 @@ def prepare(name: str, progress=None) -> Path:
         return _prepare(name, progress)
 
 
+def download_vad_weights(repo, revision, directory, hashes, progress):
+    import httpx
+    from tempfile import TemporaryDirectory
+
+    directory.mkdir(parents=True, exist_ok=True)
+    base = f"https://raw.githubusercontent.com/{repo}/{revision}/convert/out/"
+    with TemporaryDirectory(dir=directory) as temp, httpx.Client(follow_redirects=True, timeout=60) as client:
+        done = 0
+        for index, (name, expected) in enumerate(hashes.items()):
+            target = directory / name
+            if not target.is_file() or file_hash(target) != expected:
+                staged = Path(temp) / name
+                with client.stream("GET", base + name) as response, staged.open("wb") as stream:
+                    response.raise_for_status()
+                    for chunk in response.iter_bytes():
+                        stream.write(chunk)
+                        notify(
+                            progress,
+                            "download",
+                            bytes_done=done + stream.tell(),
+                            bytes_total=FIRERED_BYTES,
+                            files_done=index,
+                            files_total=len(hashes),
+                        )
+                if file_hash(staged) != expected:
+                    raise ValueError("FireRedVAD ncnn SHA256 mismatch: " + name)
+                staged.replace(target)
+            done += target.stat().st_size
+        notify(
+            progress,
+            "verify",
+            message="FireRedVAD ncnn SHA256",
+            files_done=len(hashes),
+            files_total=len(hashes),
+        )
+
+
 def _prepare(name, progress):
     repo, revision, kind = REGISTRY[name]
     if kind == "speech":
@@ -347,14 +324,7 @@ def _prepare(name, progress):
         p = model_dir(name)
         if check_manifest(name, progress):
             return p
-        download_snapshot(repo, revision, p, ["VAD/model.pth.tar", "VAD/cmvn.ark"], progress)
-        notify(progress, "verify", message="校驗模型檔案", files_done=0, files_total=len(HASHES))
-        for index, (filename, expected) in enumerate(HASHES.items(), 1):
-            source = p / "VAD" / filename
-            if file_hash(source) != expected:
-                raise ValueError("FireRedVAD SHA256 mismatch")
-            source.replace(p / filename)
-            notify(progress, "verify", message=f"校驗 {filename}", files_done=index, files_total=len(HASHES))
+        download_vad_weights(repo, revision, p, HASHES, progress)
         atomic_json(p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": HASHES})
         return p
     if name in SPEECH_FILES:
@@ -397,7 +367,7 @@ def worker_env() -> dict:
         HF_HUB_OFFLINE="1",
         TRANSFORMERS_OFFLINE="1",
         TOKENIZERS_PARALLELISM="false",
-        PYTHONPATH=str(ROOT / "src"),
+        PYTHONPATH=os.pathsep.join(map(str, (ROOT / "src", ROOT / "bin/vad"))),
         ONSEI_ROOT=str(ROOT),
     )
     return env

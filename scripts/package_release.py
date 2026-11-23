@@ -49,11 +49,14 @@ def production_files(root, platform):
             platform == "linux" and (p.suffix in {".cmd", ".bat", ".ps1"} or p.name == "setup_ffmpeg.py")
         )
         and not (platform == "windows" and p.suffix == ".sh")
-        and (p.parts[0] != "runtimes" or ("-windows." in p.name) == (platform == "windows"))
     ]
 
 
 def trim_engine(directory, engine, platform):
+    if engine == "vad":
+        for unused in ("ncnn/model_zoo", "ncnn/utils", "kaldi_native_fbank/include"):
+            shutil.rmtree(directory / unused, ignore_errors=True)
+        return
     for path in sorted(directory.rglob("*"), reverse=True):
         if not path.is_file() and not path.is_symlink():
             continue

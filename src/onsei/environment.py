@@ -4,8 +4,9 @@ import json
 import platform
 import shutil
 import subprocess
+import sys
 from onsei import backend
-from onsei.util import ROOT, STATE
+from onsei.util import ROOT
 
 MIN_GLIBC = (2, 38)
 
@@ -79,13 +80,9 @@ def inspect_environment(*, runtimes=False, engines=True):
         )
         add("frontend", (ROOT / "frontend/dist/index.html").is_file(), str(ROOT / "frontend/dist"))
     if runtimes:
-        from onsei.models import venv_python, worker_env
+        from onsei.models import worker_env
 
-        python = venv_python(STATE / "vad")
-        if python.exists():
-            ok, detail = command([str(python), "-c", "import torch,fireredvad"], env=worker_env(), timeout=30)
-        else:
-            ok, detail = False, "Optional runtime not installed"
+        ok, detail = command([sys.executable, "-c", "import ncnn, kaldi_native_fbank"], env=worker_env(), timeout=30)
         add("vad", ok, detail, required=False)
     from onsei.diskspace import existing_directory
     from onsei.user_paths import config_dir, models_dir

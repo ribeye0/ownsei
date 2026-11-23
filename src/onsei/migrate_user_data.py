@@ -7,9 +7,9 @@ from tempfile import TemporaryDirectory
 
 from filelock import FileLock
 
-from onsei.catalog import REGISTRY
+from onsei.models import REGISTRY, model_dir
 from onsei.global_preferences import load_global
-from onsei.user_paths import config_dir, locks_dir, models_dir
+from onsei.user_paths import config_dir, locks_dir
 from onsei.util import atomic_json
 
 
@@ -30,7 +30,8 @@ def import_user_data(installation: Path):
                 copied.append(glossary.name)
     with FileLock(locks_dir() / "model-operation.lock"):
         for name in REGISTRY:
-            old, new = source / name, models_dir() / name
+            new = model_dir(name)
+            old = source / new.name
             if not old.is_dir():
                 continue
             if new.exists() or new.is_symlink():

@@ -8,14 +8,17 @@ import pytest
 from onsei import models, processes, native_picker, environment
 
 
-def test_windows_runtime_paths_select_windows_locks(tmp_path, monkeypatch):
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_vad_requires_both_native_extensions_for_this_platform(tmp_path, monkeypatch, platform):
     monkeypatch.setattr(models, "ROOT", tmp_path)
-    monkeypatch.setattr(models.sys, "platform", "win32")
-    assert models.venv_python(tmp_path).as_posix().endswith("Scripts/python.exe")
-    assert models.runtime_lock("vad").name == "vad-windows.lock"
-    monkeypatch.setattr(models.sys, "platform", "linux")
-    assert models.venv_python(tmp_path).as_posix().endswith("bin/python")
-    assert models.runtime_lock("vad").name == "vad.lock"
+    monkeypatch.setattr(models.sys, "platform", platform)
+    folder = tmp_path / "bin/vad"
+    for lib in models.vad_libraries("windows" if platform == "win32" else "linux"):
+        assert not models.vad_runtime_ready()
+        path = folder / lib
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    assert models.vad_runtime_ready()
 
 
 def test_windows_process_identity_never_authorizes_reused_or_legacy_pid(tmp_path, monkeypatch):

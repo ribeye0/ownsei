@@ -1,7 +1,14 @@
 """Pinned model catalog. Static metadata only; no downloads or runtime imports."""
 
+def vad_libraries(platform):
+    suffix = "cp312-win_amd64.pyd" if platform == "windows" else "cpython-312-x86_64-linux-gnu.so"
+    return ("ncnn/ncnn." + suffix, "_kaldi_native_fbank." + suffix)
+
+
+FIRERED_BYTES = 1_187_804  # Offline graph, weights and two CMVN vectors
+
 REGISTRY = {
-    "firered-vad": ("FireRedTeam/FireRedVAD", "7990aaccc6b7aec1e527743bd30201f2c4a03b8c", "vad"),
+    "firered-vad": ("lhwcv/FireRedVAD-NCNN-streaming", "8e9d2694e7e55abeda4bfdb14f31e56dc0d4c95e", "vad"),
     "qwen3.5-4b-names": ("unsloth/Qwen3.5-4B-GGUF", "e87f176479d0855a907a41277aca2f8ee7a09523", None),
     "haas-ja-v1.0": ("sakasegawa/Haas-ja-v1.0-GGUF", "6b965d5007ba780585de51549d57a8c1c0d67c7e", "speech"),
     "haas-ja-v1.0-f16": (
@@ -60,7 +67,7 @@ DEFAULT_NAMES = "qwen3.5-4b-names"
 
 MODEL_INFO = {
     "silero-vad": ("Silero VAD v6.2", "vad", "309K", "GGUF F32 · CPU", 0.0013, "CPU；不佔顯存"),
-    "firered-vad": ("FireRedVAD（Haas 台詞篩選）", "vad", "0.59M", "CPU FP32", 0.0024, "CPU；不佔顯存"),
+    "firered-vad": ("FireRedVAD（Haas 台詞篩選）", "vad", "0.59M", "ncnn CPU", FIRERED_BYTES / 10**9, "CPU；不佔顯存"),
     "qwen3.5-4b-names": (
         "Qwen3.5 4B（人物譯名）",
         "names",

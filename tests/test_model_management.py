@@ -42,10 +42,11 @@ def install_receipt(name):
     }
     atomic_json(path / "onsei-model.json", metadata)
     kind = models.REGISTRY[name][2]
-    if kind:
-        python = models.venv_python(manager.STATE / kind)
-        python.parent.mkdir(parents=True, exist_ok=True)
-        python.touch()
+    if kind == "vad":
+        for lib in models.vad_libraries("windows" if models.sys.platform == "win32" else "linux"):
+            path_to_lib = manager.ROOT / "bin/vad" / lib
+            path_to_lib.parent.mkdir(parents=True, exist_ok=True)
+            path_to_lib.touch()
     return path
 
 
@@ -288,7 +289,7 @@ def test_delete_removes_only_model_and_its_source_and_preserves_runtime_and_work
     assert result["removed_bytes"] > 0 and not path.exists() and not source.exists()
     assert manager.read_job("firered-vad")["status"] == "deleted"
     assert (
-        models.venv_python(manager.STATE / "vad").exists()
+        models.vad_runtime_ready()
         and (work / "original.wav").read_bytes() == b"audio"
     )
 
@@ -318,22 +319,10 @@ def test_queued_preparation_blocks_delete(local):
     assert path.exists()
 
 
-def test_runtime_lock_receipt_reuses_pinned_environment_without_network(local, monkeypatch):
-    kind = "vad"
-    uv = local / ".tools/uv"
-    uv.parent.mkdir()
-    uv.touch()
-    lock = local / f"runtimes/{kind}.lock"
-    lock.parent.mkdir()
-    lock.write_text("pinned==1")
-    env = manager.STATE / kind
-    (env / "bin").mkdir(parents=True)
-    (env / "bin/python").touch()
-    atomic_json(env / "onsei-runtime.json", {"lock_sha256": file_hash(lock), "python": "3.12"})
-    monkeypatch.setattr(
-        models.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("unchanged environment touched")
-    )
-    models.setup_runtime(kind)
+def test_bundled_vad_runtime_needs_no_installation(local, monkeypatch):
+    install_receipt("firered-vad")
+    monkeypatch.setattr(models.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("installer called"))
+    models.setup_runtime("vad")
 
 
 def test_model_routes_and_same_origin_guard(local, monkeypatch):
@@ -372,7 +361,8 @@ def test_full_log_download_is_untruncated_and_view_strips_terminal_controls(loca
 
 def test_partial_runtime_is_never_advertised_as_ready(local):
     install_receipt("firered-vad")
-    atomic_json(manager.STATE / "vad/onsei-runtime-installing.json", {"lock_sha256": "unfinished"})
+    lib = models.vad_libraries("windows" if models.sys.platform == "win32" else "linux")[1]
+    (local / "bin/vad" / lib).unlink()
     model = next(m for m in manager.catalog()["models"] if m["id"] == "firered-vad")
     assert model["installed"] and not model["runtime_ready"] and not model["ready"]
 
@@ -407,3 +397,30 @@ def test_catalog_and_preparation_share_receipt_validation(local, monkeypatch):
     for invalid in [[], None, {**receipt, "sha256": []}, {**receipt, "sha256": {"../escape": "a"}}]:
         atomic_json(path / "onsei-model.json", invalid)
         assert not manager.installed(name)
+
+
+def test_ncnn_model_repair_reuses_good_files_and_rejects_corrupt_download(local, monkeypatch):
+    import httpx
+    from onsei.vad_worker import HASHES
+
+    install_receipt("firered-vad")
+    directory = models.model_dir("firered-vad")
+    damaged = directory / "firered_vad_non_stream.ncnn.bin"
+    damaged.write_bytes(b"damaged")
+    visited = []
+    payload = b"truncated"
+
+    def serve(request):
+        visited.append(request.url.path)
+        return httpx.Response(200, content=payload)
+
+    client = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: client(transport=httpx.MockTransport(serve), **kw))
+    with pytest.raises(ValueError, match="SHA256"):
+        models.prepare("firered-vad")
+    assert not models.check_manifest("firered-vad")
+    assert damaged.read_bytes() == b"damaged"
+    payload = b"weights"
+    models.prepare("firered-vad")
+    assert len(visited) == 2 and all(url.endswith("/" + damaged.name) for url in visited)
+    assert models.check_manifest("firered-vad") and set(HASHES) == set(models.required_files("firered-vad"))
