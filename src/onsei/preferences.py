@@ -26,9 +26,18 @@ _OLD_HANS = (
     "只翻译目标句段，背景仅供理解，每个ID对应一项译文，text只放台词。"
     "字幕句尾不加句号或逗号，保留问号、感叹号与必要省略号。"
 )
-_PREVIOUS_HANT = STYLE_INSTRUCTION.replace("自然、順口。", "自然、順口、簡潔。", 1)
+_PREVIOUS_DEFAULT_HANT = (
+    "將日語角色台詞譯成適合日式二次元動畫字幕的繁體中文。讓對白像角色當面說出口一樣，自然、順口。"
+    "從角色對誰說話、當下是什麼心情，拿捏自稱、稱呼和句尾語氣，保留原文的禮貌與親疏。"
+    "遇到口吃、拉長音、停頓或重複，用中文的節奏表現。原文省略主語，中文也說得通時就省略。"
+    "\n原文說得直白，譯文就直白，委婉處也保留分寸。用詞與稱呼以使用者的術語和備註為優先。"
+    "忠於原意與人物關係，直接對話維持角色口吻，不改寫成第三人稱旁白。"
+    "字幕句尾不加句號或逗號，保留問號、驚嘆號與必要的省略號。"
+)
+_PREVIOUS_HANT = _PREVIOUS_DEFAULT_HANT.replace("自然、順口。", "自然、順口、簡潔。", 1)
 _PREVIOUS_HANS = SIMPLIFIED_STYLE_INSTRUCTION.replace("自然、顺口。", "自然、顺口、简洁。", 1)
 _OLD_TRADITIONAL_STYLES = (
+    _PREVIOUS_DEFAULT_HANT,
     _PREVIOUS_HANT,
     _PREVIOUS_HANT.replace("\n", "\n\n", 1),
     _OLD_HANT,
