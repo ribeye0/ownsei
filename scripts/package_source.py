@@ -40,7 +40,7 @@ DIRECTORIES = {
     "scripts": {".py", ".sh", ".ps1", ".bat", ".cmd"},
     ".github/workflows": {".yml", ".yaml"},
 }
-ASSETS = ("ownsei-logo.png", "ownsei-logo-dark.png")
+ASSETS = ("ownsei-logo.webp", "ownsei-logo-dark.webp")
 SECRETS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{30,}|hf_[A-Za-z0-9]{20,}|sk-(?:or-v1-)?[A-Za-z0-9_-]{32,})\b"),

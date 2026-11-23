@@ -8,7 +8,7 @@ export function usePreferences() {
     document.documentElement.lang=language==="zh-Hans"?"zh-CN":"zh-TW";
     document.documentElement.dataset.theme=theme;
     const favicon=document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if(favicon)favicon.href=theme==="mocha"?"/ownsei-logo-dark.png":"/ownsei-logo.png";
+    if(favicon)favicon.href=theme==="mocha"?"/ownsei-logo-dark.webp":"/ownsei-logo.webp";
   },[language,theme]);
   useEffect(()=>{
     const update=()=>{updateLanguage(locale());updatePreference(localePreference());};

@@ -35,7 +35,7 @@ export function Sidebar({
       <div className="brand">
         <img
           className="brandmark"
-          src={theme === "mocha" ? "/ownsei-logo-dark.png" : "/ownsei-logo.png"}
+          src={theme === "mocha" ? "/ownsei-logo-dark.webp" : "/ownsei-logo.webp"}
           alt=""
         />
         <div className="brand-name">

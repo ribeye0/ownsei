@@ -8,12 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  checks:
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
   publish:
-    needs: checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -43,6 +38,8 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
           Ownsei 在本機使用 Haas JA 與 Index-NativeLong 製作日語音聲字幕。
 
+          v0.2.5 加入背景下載更新與手動安裝重啟，並縮小介面圖示。
+
           | 平台 | 下載與啟動 |
           | --- | --- |
           | Windows x64 | 解壓縮 `windows-x64-vulkan.zip` 結尾的檔案，雙擊 `Ownsei.cmd`。 |
@@ -53,3 +50,12 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Ownsei $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md" \
             ownsei-*-linux-x64-vulkan.tar.gz ownsei-*-windows-x64-vulkan.zip ownsei-*-source.tar.gz SHA256SUMS
+
+      - name: Retire superseded releases
+        if: github.ref_name == 'v0.2.5'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for tag in v0.2.1 v0.2.2 v0.2.3; do
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+          done
