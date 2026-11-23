@@ -242,14 +242,10 @@ aside {
   object-fit: contain;
 }
 .brand b {
+  line-height: 1;
   font-size: 22px;
   letter-spacing: -0.6px;
   font-weight: 700;
-}
-.brand small {
-  display: block;
-  font-size: 11px;
-  letter-spacing: 0.4px;
 }
 .brand .help-button {
   width: 28px;

@@ -36,10 +36,7 @@ export function Sidebar({
           src={theme === "mocha" ? "/ownsei-logo-dark.png" : "/ownsei-logo.png"}
           alt=""
         />
-        <div>
-          <b>Ownsei</b>
-          <small>{ui("日語音聲字幕工具")}</small>
-        </div>
+        <b>Ownsei</b>
         <button
           className="help-button"
           aria-label={ui("快捷鍵說明")}
