@@ -22,27 +22,51 @@ PROBE = r"""
 param([string]$Picker, [string]$Kind, [string]$Initial = '')
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition 'namespace System.Windows.Forms { public enum DialogResult { OK = 1, Cancel = 2 } }'
-function Add-Type { param([string]$AssemblyName) }
+function Add-Type {
+    param([string]$AssemblyName, [string]$TypeDefinition)
+    if ($TypeDefinition) {
+        # Compile the shipped interop declarations, then substitute only the UI call.
+        Microsoft.PowerShell.Utility\Add-Type -TypeDefinition ($TypeDefinition.Replace('namespace Ownsei', 'namespace CompiledOwnsei'))
+        Microsoft.PowerShell.Utility\Add-Type -TypeDefinition @'
+using System;
+namespace Ownsei {
+    public static class ExplorerFolderPicker {
+        public static string Select(IntPtr owner, string initialDirectory) {
+            if (owner != new IntPtr(7) || initialDirectory != Environment.GetEnvironmentVariable("OWNSEI_PICKER_EXPECTED"))
+                throw new InvalidOperationException("Incorrect owner or initial folder");
+            Environment.SetEnvironmentVariable("OWNSEI_FOLDER_SHOWN", "1");
+            return Environment.GetEnvironmentVariable("OWNSEI_PICKER_SELECTED");
+        }
+    }
+}
+'@
+    }
+}
 function New-Object {
     param([string]$TypeName, [object[]]$ArgumentList)
     if ($TypeName -eq 'System.Windows.Forms.Form') {
         $owner = [pscustomobject]@{ ShowInTaskbar = $true; TopMost = $false; Opacity = 1; StartPosition = '' }
-        $owner | Add-Member ScriptMethod Show { $global:OwnseiOwnerShown = $true }
+        $owner | Add-Member NoteProperty Handle ([IntPtr]::Zero)
+        $owner | Add-Member ScriptMethod Show {
+            if (-not $this.TopMost -or $this.ShowInTaskbar) { throw 'Incorrect owner setup' }
+            $this.Handle = [IntPtr]7
+            $global:OwnseiOwnerShown = $true
+        }
         $owner | Add-Member ScriptMethod Activate {}
         $owner | Add-Member ScriptMethod Dispose { $global:OwnseiOwnerDisposed = $true }
         return $owner
     }
-    if ($TypeName -in @('System.Windows.Forms.OpenFileDialog', 'System.Windows.Forms.FolderBrowserDialog')) {
+    if ($TypeName -eq 'System.Windows.Forms.OpenFileDialog') {
         $dialog = [pscustomobject]@{
-            Description = ''; ShowNewFolderButton = $true; Title = ''; Filter = '';
-            CheckFileExists = $false; SelectedPath = ''; InitialDirectory = ''; FileName = ''
+            Title = ''; Filter = '';
+            CheckFileExists = $false; InitialDirectory = ''; FileName = ''
         }
         $dialog | Add-Member ScriptMethod ShowDialog {
             $owner = $args[0]
             if (-not $global:OwnseiOwnerShown -or -not $owner.TopMost -or $owner.ShowInTaskbar) {
                 throw 'Picker requires a visible-in-front owner without a taskbar button'
             }
-            $actual = if ($env:OWNSEI_PICKER_KIND -eq 'file') { $this.InitialDirectory } else { $this.SelectedPath }
+            $actual = $this.InitialDirectory
             if ($actual -ne $env:OWNSEI_PICKER_EXPECTED) { throw "Unexpected initial directory: $actual" }
             $global:OwnseiPickerShown = $true
             return [System.Windows.Forms.DialogResult]::Cancel
@@ -53,7 +77,9 @@ function New-Object {
     Microsoft.PowerShell.Utility\New-Object @PSBoundParameters
 }
 & $Picker -Kind $Kind -Initial $Initial
-if (-not $global:OwnseiPickerShown -or -not $global:OwnseiPickerDisposed -or -not $global:OwnseiOwnerDisposed) {
+if (-not $global:OwnseiOwnerDisposed) { throw 'Owner was not disposed' }
+if ($Kind -eq 'directory' -and $env:OWNSEI_FOLDER_SHOWN -ne '1') { throw 'Folder picker was not shown' }
+if ($Kind -eq 'file' -and (-not $global:OwnseiPickerShown -or -not $global:OwnseiPickerDisposed)) {
     throw 'Dialog lifecycle incomplete'
 }
 """
@@ -62,6 +88,14 @@ if (-not $global:OwnseiPickerShown -or -not $global:OwnseiPickerDisposed -or -no
 @pytest.mark.parametrize("kind", ["file", "directory"])
 @pytest.mark.parametrize("start", ["empty", "whitespace", "missing", "directory", "file"])
 def test_powershell_picker_initial_path_and_cancel(tmp_path, kind, start):
+    exercise_picker(tmp_path, kind, start)
+
+
+def test_explorer_returns_selected_folder_verbatim(tmp_path):
+    exercise_picker(tmp_path, "directory", "empty", select=True)
+
+
+def exercise_picker(tmp_path, kind, start, select=False):
     folder = tmp_path / "音聲 [test] & $(literal)"
     folder.mkdir()
     audio = folder / "01 日本語.wav"
@@ -89,7 +123,11 @@ def test_powershell_picker_initial_path_and_cancel(tmp_path, kind, start):
         encoding="utf-8",
         errors="replace",
         timeout=30,
-        env={**os.environ, "OWNSEI_PICKER_EXPECTED": str(expected), "OWNSEI_PICKER_KIND": kind},
+        env={
+            **os.environ,
+            "OWNSEI_PICKER_EXPECTED": str(expected),
+            **({"OWNSEI_PICKER_SELECTED": str(folder)} if select else {}),
+        },
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == ""
+    assert result.stdout == (f"{folder}\n" if select else "")
