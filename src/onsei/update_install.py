@@ -123,6 +123,18 @@ def copy_atomic(source, destination):
             cached.unlink(missing_ok=True)
 
 
+def matches(source, destination, digest=None):
+    if source.is_symlink() or destination.is_symlink():
+        return (
+            source.is_symlink() and destination.is_symlink() and source.readlink() == destination.readlink()
+        )
+    return (
+        destination.is_file()
+        and stat.S_IMODE(source.stat().st_mode) == stat.S_IMODE(destination.stat().st_mode)
+        and file_hash(destination) == (digest or file_hash(source))
+    )
+
+
 def rollback(root):
     backup = update_dir(root) / "backup"
     journal = backup / "plan.json"
@@ -131,7 +143,9 @@ def rollback(root):
     for name, existed in read(journal).items():
         dest = root / managed(name)
         if existed:
-            copy_atomic(backup / "files" / name, dest)
+            saved = backup / "files" / name
+            if not matches(saved, dest):
+                copy_atomic(saved, dest)
         else:
             dest.unlink(missing_ok=True)
     journal.unlink()
@@ -175,15 +189,8 @@ def apply(root):
             if exists and name not in old:
                 raise ValueError(f"安裝目錄已有同名檔案：{name}")
             staged = stage / name
-            if name in new and old.get(name) == new[name] and exists and file_hash(dest) == new[name]:
-                if dest.is_symlink() and staged.is_symlink() and os.readlink(dest) == os.readlink(staged):
-                    continue
-                if (
-                    not dest.is_symlink()
-                    and not staged.is_symlink()
-                    and stat.S_IMODE(dest.stat().st_mode) == stat.S_IMODE(staged.stat().st_mode)
-                ):
-                    continue
+            if name in new and old.get(name) == new[name] and matches(staged, dest, new[name]):
+                continue
             if exists:
                 saved = backup / "files" / name
                 saved.parent.mkdir(parents=True, exist_ok=True)

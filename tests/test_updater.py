@@ -208,10 +208,9 @@ def test_interrupted_file_replacement_can_be_rolled_back(tmp_path, monkeypatch):
             raise OSError("interrupted")
         copy(source, dest)
 
-    with monkeypatch.context() as m:
-        m.setattr(update_install, "copy_atomic", fail_once)
-        with pytest.raises(OSError, match="interrupted"):
-            update_install.apply(root)
+    monkeypatch.setattr(update_install, "copy_atomic", fail_once)
+    with pytest.raises(OSError, match="interrupted"):
+        update_install.apply(root)
     assert (root / "README.md").read_text() == "0.2.10"
     assert update_install.rollback(root)
     assert (root / "README.md").read_text() == "0.2.9"

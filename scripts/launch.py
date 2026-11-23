@@ -107,15 +107,17 @@ def main():
                     try:
                         apply(root)
                         setup(root)
-                    except Exception:
+                    except Exception as error:
                         if rollback(root):
                             setup(root)
-                        raise
-                pending = True
-            except Exception as error:
-                message = "請先關閉同一安裝目錄的其他 Ownsei 視窗" if isinstance(error, Timeout) else str(error)
+                        (cache / "error.txt").write_text(str(error), encoding="utf-8")
+                        print(f"更新失敗：{error}", flush=True)
+                        pending = False
+                    else:
+                        pending = True
+            except Timeout:
+                message = "請先關閉同一安裝目錄的其他 Ownsei 視窗"
                 (cache / "error.txt").write_text(message, encoding="utf-8")
-                print(f"更新失敗：{message}", flush=True)
                 pending = False
             opening = False
     finally:
