@@ -10,4 +10,4 @@ if [[ ! -f frontend/dist/index.html ]]; then
   (cd frontend && npm ci && npm run build)
 fi
 .venv/bin/ownsei doctor --strict
-printf 'Ready. Prepare models with ownsei models prepare, then bash scripts/start.sh\n'
+printf 'Ownsei ready. Start with bash ownsei.sh; download models in Model management.\n'

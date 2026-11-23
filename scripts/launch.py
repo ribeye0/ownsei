@@ -1,6 +1,7 @@
 """Run the local UI and open a browser after the server is ready."""
 
 import argparse
+import errno
 import os
 from pathlib import Path
 import socket
@@ -11,25 +12,43 @@ import urllib.error
 import urllib.request
 import webbrowser
 
+DEFAULT_PORT = 8878
+
+
+def select_port(requested=None):
+    """Respect an explicit port; otherwise find an available loopback port."""
+    candidates = [requested] if requested is not None else [*range(DEFAULT_PORT, min(DEFAULT_PORT + 20, 65536)), 0]
+    for port in candidates:
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", port))
+            except OSError as error:
+                if requested is not None or error.errno != errno.EADDRINUSE:
+                    raise
+            else:
+                return probe.getsockname()[1]
+    raise OSError("No available loopback port")
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=8878)
+    parser.add_argument("--port", type=int, help="Use this port (default: first available from 8878)")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
+    if args.port is not None and not 1 <= args.port <= 65535:
         parser.error("Invalid port")
     root = Path(__file__).resolve().parents[1]
-    with socket.socket() as probe:
-        try:
-            probe.bind(("127.0.0.1", args.port))
-        except OSError:
-            parser.error("Port already in use; choose another with --port")
+    try:
+        port = select_port(args.port)
+    except OSError as error:
+        parser.error(f"Cannot listen on the requested port: {error}")
+    if args.port is None and port != DEFAULT_PORT:
+        print(f"Port {DEFAULT_PORT} is occupied; using {port}.", flush=True)
     env = {**os.environ, "PYTHONUTF8": "1", "ONSEI_ROOT": str(root)}
     process = subprocess.Popen(
-        [sys.executable, "-m", "onsei.cli", "serve", "--port", str(args.port)], cwd=root, env=env
+        [sys.executable, "-m", "onsei.cli", "serve", "--port", str(port)], cwd=root, env=env
     )
-    url = f"http://127.0.0.1:{args.port}/"
+    url = f"http://127.0.0.1:{port}/"
     try:
         for _ in range(120):
             if process.poll() is not None:
@@ -42,6 +61,7 @@ def main():
                 time.sleep(0.25)
         else:
             raise RuntimeError("Server did not become ready")
+        print(f"Ownsei: {url}", flush=True)
         if not args.no_browser:
             webbrowser.open(url)
         raise SystemExit(process.wait())

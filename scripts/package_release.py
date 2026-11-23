@@ -38,12 +38,15 @@ RUNTIME_SCRIPTS = {
 }
 
 
-def production_files(root):
+def production_files(root, platform):
     return [
         p
         for p in source_files(root)
         if p.parts[0] not in {"tests", ".github", "frontend"}
         and (p.parts[0] != "scripts" or p.name in RUNTIME_SCRIPTS)
+        and not (platform == "linux" and (p.suffix in {".cmd", ".bat", ".ps1"} or p.name == "setup_ffmpeg.py"))
+        and not (platform == "windows" and p.suffix == ".sh")
+        and (p.parts[0] != "runtimes" or ("-windows." in p.name) == (platform == "windows"))
     ]
 
 
@@ -71,13 +74,13 @@ def trim_engine(directory, engine, platform):
 def build_release(root, output, target, cache, work):
     if target not in TARGETS:
         raise ValueError("Unsupported release target")
-    files = production_files(root)
+    platform, _, backend = target.split("-")
+    files = production_files(root, platform)
     issues = audit(root, files)
     if issues:
         raise ValueError(json.dumps(issues))
     if not (root / "frontend/dist/index.html").is_file():
         raise ValueError("Build the frontend first")
-    platform, _, backend = target.split("-")
     version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
     name = f"ownsei-{version}-{target}"
     output.mkdir(parents=True, exist_ok=True)
@@ -114,6 +117,8 @@ def build_release(root, output, target, cache, work):
         instructions = f"""# Ownsei {version} · {target}
 
 Start: `{start}`
+The launcher opens the browser and chooses another port if 8878 is occupied.
+Use `--port NUMBER` to require a specific port.
 
 The UI and native inference engines are included. First setup downloads Python
 3.12 and application dependencies; Node.js is not required. Models are downloaded

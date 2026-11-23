@@ -79,3 +79,15 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
         "/tests/" in n or "/models/" in n or "/frontend/src/" in n or "unused-converter" in n for n in names
     )
     assert any("NVIDIA-CUDA-EULA" in n for n in names) == target.endswith("cuda")
+    contents = set(manifest["files"])
+    assert "scripts/launch.py" in contents
+    if target.startswith("linux"):
+        assert "ownsei.sh" in contents
+        assert "scripts/install.sh" in contents
+        assert "runtimes/vad.lock" in contents
+        assert not any(n.endswith((".cmd", ".bat", ".ps1")) or "-windows." in n for n in contents)
+    else:
+        assert {"Ownsei.cmd", "Install.cmd", "scripts/start.ps1", "scripts/choose_path.ps1"} <= contents
+        assert "runtimes/vad-windows.lock" in contents
+        assert "runtimes/vad.lock" not in contents
+        assert not any(n.endswith(".sh") for n in contents)
