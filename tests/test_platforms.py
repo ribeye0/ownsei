@@ -39,16 +39,44 @@ def test_windows_process_identity_never_authorizes_reused_or_legacy_pid(tmp_path
     assert processes.spawn_options() == {"creationflags": 0x200}
 
 
-def test_windows_headless_cancellation_terminates_descendants(tmp_path, monkeypatch):
+def test_windows_cancellation_targets_only_the_worker_tree(monkeypatch):
     monkeypatch.setattr(processes.sys, "platform", "win32")
     monkeypatch.setattr(signal, "CTRL_BREAK_EVENT", 1, raising=False)
-    monkeypatch.setattr(processes.os, "kill", lambda *a: (_ for _ in ()).throw(OSError("no console")))
+    monkeypatch.setattr(
+        processes.os, "kill", lambda *a: pytest.fail("Cancellation must not signal the console")
+    )
     calls = []
     child = SimpleNamespace(kill=lambda: calls.append("child"))
     parent = SimpleNamespace(children=lambda recursive: [child], kill=lambda: calls.append("parent"))
     monkeypatch.setattr(processes.psutil, "Process", lambda pid: parent)
     processes.signal_group(22, signal.SIGTERM)
     assert calls == ["child", "parent"]
+
+
+def test_windows_runner_cancel_is_cooperative_then_reaps_only_owned_worker(tmp_path, monkeypatch):
+    from onsei import runner
+    from onsei.storage import Store
+
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    monkeypatch.setattr(runner, "alive", lambda _: True)
+    monkeypatch.setattr(runner, "runner_owned", lambda *_: True)
+    signals = []
+    monkeypatch.setattr(runner, "signal_group", lambda *args: signals.append(args))
+    store = Store.create(tmp_path / "project", "cancel")
+    job = store.new_job("transcribe", {})
+    job.update(status="running", pid=1234, process_identity="owned-test-process")
+    store.save_job(job)
+    runner.cancel_job(store, job["id"])
+    assert store.job(job["id"])["status"] == "cancelling"
+    assert signals == []  # Never send a console event to a venv redirector PID.
+    job = store.job(job["id"])
+    monkeypatch.setattr(runner.time, "time", lambda: job["cancel_requested_at"] + 11)
+    monkeypatch.setattr(runner, "runner_owned", lambda *_: False)
+    runner.recover(store)
+    assert signals == []
+    monkeypatch.setattr(runner, "runner_owned", lambda *_: True)
+    runner.recover(store)
+    assert signals == [(1234, getattr(signal, "SIGKILL", 9))]
 
 
 def test_windows_dialog_uses_literal_arguments_and_preserves_filename(tmp_path, monkeypatch):

@@ -3,6 +3,7 @@
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 import shutil
 import tarfile
@@ -29,6 +30,10 @@ def test_platform_package_contains_ui_engines_and_matching_manifest(tmp_path, mo
         destination = source / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, destination)
+        if target.startswith("windows"):
+            # Reproducible source archives use epoch timestamps, before ZIP's
+            # supported 1980 boundary. Rebuilding those sources must still work.
+            os.utime(destination, (0, 0))
     (source / "frontend/dist").mkdir()
     (source / "frontend/dist/index.html").write_text("<title>Ownsei</title>")
     (source / "models").mkdir()

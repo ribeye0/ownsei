@@ -1,4 +1,7 @@
 @echo off
+setlocal
 cd /d "%~dp0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install.ps1"
-if errorlevel 1 pause
+set "code=%errorlevel%"
+if not "%code%"=="0" pause
+exit /b %code%

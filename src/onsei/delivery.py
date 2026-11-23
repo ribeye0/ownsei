@@ -175,7 +175,7 @@ def prepare_delivery(
                             candidates.append((path, name, folder))
                     counts = Counter(name for _, name, _ in candidates)
                     for path, name, folder in candidates:
-                        relative = str(Path(folder) / name) if counts[name] > 1 else name
+                        relative = (Path(folder) / name).as_posix() if counts[name] > 1 else name
                         staged = root / str(len(outputs)) / name
                         staged.parent.mkdir()
                         shutil.copyfile(path, staged)
@@ -206,7 +206,7 @@ def prepare_delivery(
         for index, output in enumerate(outputs):
             output["index"] = index
             output["archive_path"] = (
-                str(Path("track-" + output["track_id"]) / output["relative"])
+                (Path("track-" + output["track_id"]) / output["relative"]).as_posix()
                 if counts[output["relative"]] > 1
                 else output["relative"]
             )

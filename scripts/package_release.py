@@ -141,7 +141,9 @@ Haas uses speech.cpp Vulkan. Translation uses llama.cpp {backend.upper()}.
         }
         (directory / "manifest.json").write_text(json.dumps({"format": 1, "files": hashes}, indent=2) + "\n")
         if platform == "windows":
-            with zipfile.ZipFile(result, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as bundle:
+            with zipfile.ZipFile(
+                result, "x", compression=zipfile.ZIP_DEFLATED, compresslevel=6, strict_timestamps=False
+            ) as bundle:
                 for path in sorted(directory.rglob("*")):
                     if path.is_file():
                         bundle.write(path, str(path.relative_to(directory.parent)).replace("\\", "/"))

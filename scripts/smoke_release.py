@@ -65,7 +65,15 @@ class Smoke:
     def save(self):
         temporary = self.output / "report.json.pending"
         temporary.write_text(json.dumps(self.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(self.output / "report.json")
+        for attempt in range(10):
+            try:
+                temporary.replace(self.output / "report.json")
+                return
+            except PermissionError:
+                if os.name != "nt" or attempt == 9:
+                    raise
+                # A reader on Windows can briefly hold the previous report open.
+                time.sleep(0.05 * (attempt + 1))
 
     @contextmanager
     def step(self, name):

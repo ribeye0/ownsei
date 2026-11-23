@@ -2,7 +2,6 @@
 
 import os
 import subprocess
-import signal
 import sys
 import psutil
 from pathlib import Path
@@ -77,12 +76,8 @@ def signal_group(pid, sig):
     if sys.platform != "win32":
         os.killpg(pid, sig)
     else:
-        if sig == signal.SIGTERM:
-            try:
-                os.kill(pid, signal.CTRL_BREAK_EVENT)
-                return
-            except OSError:
-                pass  # Headless Windows sessions may not have a console.
+        # The worker's PID can belong to the real interpreter behind the venv
+        # redirector. That PID is not necessarily the console group ID.
         try:
             parent = psutil.Process(pid)
             for child in reversed(parent.children(recursive=True)):

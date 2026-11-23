@@ -2,6 +2,7 @@
 
 import json
 import time
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -158,7 +159,16 @@ def test_worker_resets_phase_specific_counters_before_verification(local, monkey
     phases = []
 
     def prepare(name, progress):
-        progress({"stage": "download", "bytes_done": 100, "bytes_total": 100, "transfer_bytes_done": 80, "files_done": 4, "files_total": 4})
+        progress(
+            {
+                "stage": "download",
+                "bytes_done": 100,
+                "bytes_total": 100,
+                "transfer_bytes_done": 80,
+                "files_done": 4,
+                "files_total": 4,
+            }
+        )
         progress({"stage": "verify", "files_done": 0, "files_total": 2})
         phases.append(json.loads(manager.paths(name)[1].read_text()))
         install_receipt(name)
@@ -179,6 +189,80 @@ def test_cancelled_bootstrap_cannot_start_and_late_progress_cannot_revive_it(loc
     state.update(status="running")
     atomic_json(manager.paths("index-translate-9b")[1], state)
     assert manager.read_job("index-translate-9b")["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+def test_running_worker_cannot_overwrite_cancelled_or_replaced_job(local, monkeypatch, replacement):
+    name = "index-translate-9b"
+    state = job(name)
+
+    def prepare(_name, progress):
+        progress({"stage": "download", "bytes_done": 1})
+        with FileLock(manager.STATE / "model-submit.lock"):
+            current = json.loads(manager.paths(name)[1].read_text())
+            current.update(id="b" * 32) if replacement else current.update(status="cancelled")
+            atomic_json(manager.paths(name)[1], current)
+        progress({"stage": "verify", "bytes_done": 999})
+
+    monkeypatch.setattr(models, "prepare", prepare)
+    monkeypatch.setattr(manager, "installed", lambda _: True)
+    manager.worker(name, state["id"])
+    saved = json.loads(manager.paths(name)[1].read_text())
+    assert saved["id"] == ("b" * 32 if replacement else state["id"])
+    assert saved["status"] == ("running" if replacement else "cancelled")
+    assert saved["bytes_done"] == 1
+
+
+def test_progress_writer_excludes_catalog_reader_during_atomic_replacement(local, monkeypatch):
+    name = "index-translate-9b"
+    state = job(name)
+    writing, release, read_done = threading.Event(), threading.Event(), threading.Event()
+    failures = []
+    original = manager.atomic_json
+
+    def write(path, value):
+        if value["status"] == "running" and value["stage"] == "download":
+            writing.set()
+            if not release.wait(5):
+                raise RuntimeError("Test did not release progress writer")
+        original(path, value)
+
+    def read():
+        try:
+            assert manager.read_job(name)["id"] == state["id"]
+        except Exception as error:
+            failures.append(error)
+        finally:
+            read_done.set()
+
+    monkeypatch.setattr(manager, "atomic_json", write)
+    monkeypatch.setattr(models, "prepare", lambda _, progress: progress({"stage": "download"}))
+    monkeypatch.setattr(manager, "installed", lambda _: True)
+    worker = threading.Thread(target=manager.worker, args=(name, state["id"]))
+    reader = threading.Thread(target=read)
+    worker.start()
+    try:
+        assert writing.wait(5)
+        reader.start()
+        assert not read_done.wait(0.1), "Catalog read raced the progress writer"
+    finally:
+        release.set()
+        worker.join(timeout=5)
+        if reader.ident is not None:
+            reader.join(timeout=5)
+    assert not worker.is_alive() and not reader.is_alive()
+    assert not failures
+    assert manager.read_job(name)["status"] == "completed"
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "failed", "completed"])
+def test_catalog_does_not_report_ready_before_preparation_finishes(local, monkeypatch, status):
+    name = "index-translate-9b"
+    monkeypatch.setattr(manager, "installed", lambda candidate: candidate == name)
+    job(name, status=status)
+    row = next(row for row in manager.catalog()["models"] if row["id"] == name)
+    assert row["installed"]
+    assert row["ready"] == (status == "completed")
 
 
 def test_dead_worker_marked_interrupted_and_invalid_identity_rejected(local):

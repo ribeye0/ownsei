@@ -16,8 +16,8 @@ from onsei.util import ROOT
 POWERSHELL = shutil.which("powershell.exe") or shutil.which("pwsh")
 pytestmark = pytest.mark.skipif(not POWERSHELL, reason="PowerShell not installed")
 
-# Only the dialog is replaced: the production script still binds arguments,
-# resolves paths, handles cancellation and disposes its dialog instance.
+# The UI objects are replaced; the production script still binds arguments,
+# resolves paths, handles cancellation and disposes its UI objects.
 PROBE = r"""
 param([string]$Picker, [string]$Kind, [string]$Initial = '')
 $ErrorActionPreference = 'Stop'
@@ -25,12 +25,23 @@ Add-Type -TypeDefinition 'namespace System.Windows.Forms { public enum DialogRes
 function Add-Type { param([string]$AssemblyName) }
 function New-Object {
     param([string]$TypeName, [object[]]$ArgumentList)
+    if ($TypeName -eq 'System.Windows.Forms.Form') {
+        $owner = [pscustomobject]@{ ShowInTaskbar = $true; TopMost = $false; Opacity = 1; StartPosition = '' }
+        $owner | Add-Member ScriptMethod Show { $global:OwnseiOwnerShown = $true }
+        $owner | Add-Member ScriptMethod Activate {}
+        $owner | Add-Member ScriptMethod Dispose { $global:OwnseiOwnerDisposed = $true }
+        return $owner
+    }
     if ($TypeName -in @('System.Windows.Forms.OpenFileDialog', 'System.Windows.Forms.FolderBrowserDialog')) {
         $dialog = [pscustomobject]@{
             Description = ''; ShowNewFolderButton = $true; Title = ''; Filter = '';
             CheckFileExists = $false; SelectedPath = ''; InitialDirectory = ''; FileName = ''
         }
         $dialog | Add-Member ScriptMethod ShowDialog {
+            $owner = $args[0]
+            if (-not $global:OwnseiOwnerShown -or -not $owner.TopMost -or $owner.ShowInTaskbar) {
+                throw 'Picker requires a visible-in-front owner without a taskbar button'
+            }
             $actual = if ($env:OWNSEI_PICKER_KIND -eq 'file') { $this.InitialDirectory } else { $this.SelectedPath }
             if ($actual -ne $env:OWNSEI_PICKER_EXPECTED) { throw "Unexpected initial directory: $actual" }
             $global:OwnseiPickerShown = $true
@@ -42,7 +53,9 @@ function New-Object {
     Microsoft.PowerShell.Utility\New-Object @PSBoundParameters
 }
 & $Picker -Kind $Kind -Initial $Initial
-if (-not $global:OwnseiPickerShown -or -not $global:OwnseiPickerDisposed) { throw 'Dialog lifecycle incomplete' }
+if (-not $global:OwnseiPickerShown -or -not $global:OwnseiPickerDisposed -or -not $global:OwnseiOwnerDisposed) {
+    throw 'Dialog lifecycle incomplete'
+}
 """
 
 

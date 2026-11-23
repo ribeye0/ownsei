@@ -371,10 +371,11 @@ def cancel_job(store: Store, job_id: str):
             cancel_requested_at=job.get("cancel_requested_at", time.time()),
         )
         store.save_job(job)
-        try:
-            signal_group(job["pid"], signal.SIGTERM)
-        except ProcessLookupError:
-            pass
+        if sys.platform != "win32":
+            try:
+                signal_group(job["pid"], signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         return
     else:
         raise ValueError("無法確認任務程序身分，已避免向不相關程序發送信號；請檢查任務紀錄。")
@@ -449,11 +450,9 @@ def resume_job(store, old):
 
 
 if __name__ == "__main__":
-    # A cancellation kills the process group including every model subprocess.
+    # POSIX can interrupt the runner so it closes its model subprocesses.
     def stop(_sig, _frame):
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
-    if sys.platform == "win32":
-        signal.signal(signal.SIGBREAK, stop)
     run_job(Store(sys.argv[1]), sys.argv[2])

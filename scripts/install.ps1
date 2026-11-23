@@ -11,8 +11,9 @@ function Run-Checked([string]$Program, [string[]]$Arguments) {
 New-Item -ItemType Directory -Force '.tools' | Out-Null
 if (!(Test-Path -LiteralPath $uv)) {
     $archive = Join-Path $root '.tools\uv.zip'
+    Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
     Invoke-WebRequest -UseBasicParsing 'https://github.com/astral-sh/uv/releases/download/0.13.0/uv-x86_64-pc-windows-msvc.zip' -OutFile $archive
-    if ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant() -ne '088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c') { throw 'uv SHA256 mismatch' }
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant() -ne '088962f9e7b7bd9ea740c04c650b2a21c8928c345bd99ac24350dc924dba656c') { throw 'uv SHA256 mismatch' }
     Expand-Archive -LiteralPath $archive -DestinationPath '.tools' -Force
     Remove-Item -LiteralPath $archive
 }

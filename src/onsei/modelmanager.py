@@ -113,7 +113,7 @@ def catalog():
                 "ready": have
                 and runtime_ok
                 and dependencies_ready
-                and not (job and job["status"] == "failed"),
+                and not (job and (job["status"] in ACTIVE or job["status"] == "failed")),
                 "dependencies": dependencies,
                 "path": str(location),
                 "bytes": bytes_on_disk(location),
@@ -307,8 +307,13 @@ def worker(name, identity):
                 state.update(bytes_done=0, bytes_total=0, transfer_bytes_done=0, files_done=0, files_total=0)
             state.update(update, updated_at=time.time())
             if changed or time.monotonic() - last_write > 0.2:
-                atomic_json(path, state)
-                last_write = time.monotonic()
+                # Readers and cancellation use this same lock. Windows can
+                # reject an open racing with the atomic replacement.
+                with FileLock(STATE / "model-submit.lock"):
+                    current = json.loads(path.read_text())
+                    if current["id"] == identity and current["status"] == "running":
+                        atomic_json(path, state)
+                        last_write = time.monotonic()
 
     try:
         models.prepare(name, progress)
