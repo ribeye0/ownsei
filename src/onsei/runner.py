@@ -255,6 +255,8 @@ def _run_job(store: Store, job_id: str):
                             track.id,
                             store.path / "exports",
                             japanese_only=action == "transcribe",
+                            languages=["ja"] if action == "transcribe" else ["zh"],
+                            formats=["vtt"],
                             version=options.get("input_snapshots", {}).get(track.id, {}).get("version")
                             if result_id
                             else None,

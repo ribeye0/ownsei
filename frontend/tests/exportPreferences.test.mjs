@@ -6,8 +6,8 @@ const {loadExportPreferences, saveExportPreferences, normalizeExportPreferences}
 
 test('first export defaults to Chinese VTT and explicit save survives reopening across projects', async () => {
   await fixture.reset();
-  assert.deepEqual(loadExportPreferences(), {languages:['zh'], formats:['vtt'], chinese:'as-result', languageTag:false, destination:'download', overwrite:false});
-  const preferences = {languages:['zh','ja'], formats:['vtt','srt'], chinese:'zh-Hans', languageTag:true, destination:'sub', overwrite:true};
+  assert.deepEqual(loadExportPreferences(), {languages:['zh'], formats:['vtt'], chinese:'as-result', languageTag:false, destination:'download', overwrite:false, clearCache:false});
+  const preferences = {languages:['zh','ja'], formats:['vtt','srt'], chinese:'zh-Hans', languageTag:true, destination:'sub', overwrite:true, clearCache:true};
   const draft = {...preferences, track:'one-track', result_id:'one-result'};
   assert.deepEqual(loadExportPreferences().languages, ['zh']); // Editing alone does not save.
   await saveExportPreferences(draft);
@@ -22,7 +22,7 @@ test('malformed saved preferences recover valid selections and independent facto
   assert.deepEqual(loadExportPreferences().languages, ['zh']);
   for (const value of [null, [], 42]) assert.equal(normalizeExportPreferences(value).destination, 'download');
   assert.deepEqual(normalizeExportPreferences({languages:['invalid','zh','zh'], formats:[], chinese:'bad', languageTag:'false', destination:'../bad', overwrite:'true'}),
-    {languages:['zh'], formats:['vtt'], chinese:'as-result', languageTag:false, destination:'download', overwrite:false});
+    {languages:['zh'], formats:['vtt'], chinese:'as-result', languageTag:false, destination:'download', overwrite:false, clearCache:false});
 });
 
 test('disk write failures reach the explicit save action', async () => {

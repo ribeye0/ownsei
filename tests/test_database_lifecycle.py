@@ -75,7 +75,7 @@ def test_retry_after_interrupted_migration_preserves_data_and_valid_backup(tmp_p
     reopened = Store(store.path)
     assert reopened.settings()["title"] == "保留的專案"
     with reopened.db() as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 5
     with closing(sqlite3.connect(backup)) as db:
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert db.execute("PRAGMA user_version").fetchone()[0] == 3
@@ -150,3 +150,20 @@ def test_copied_legacy_registry_uses_local_projects_and_preserves_external_regis
         assert dict(db.execute("SELECT id,path FROM projects")) == {"abc": "abc", "ext": str(external.path)}
     copied.new_job("translate", {})
     assert modelmanager.tasks_pending()
+
+
+def test_reclaim_only_identified_legacy_vad_environments(tmp_path):
+    from onsei.segmentation import retire_legacy_vad
+
+    state = tmp_path / ".runtime-envs"
+    env = state / "vad"
+    env.mkdir(parents=True)
+    (env / "pyvenv.cfg").touch()
+    marker = env / "onsei-runtime.json"
+    marker.write_text("{}")
+    assert not retire_legacy_vad(state) and env.exists()
+    marker.write_text(
+        '{"python":"3.12","lock_sha256":"1a06ca3ee7348be3ed252286f4a920393f5feeea55da710af01076912c07271d"}'
+    )
+    assert retire_legacy_vad(state) and not env.exists()
+    assert not retire_legacy_vad(state)

@@ -9,7 +9,9 @@ type Sources = {
     versions: TranscriptVersion[];
     translations: TranslationVersion[];
 };
+type CacheCleanup = { bytes: number; errors: {track_id: string; error: string}[] };
 type Delivery = {
+    cache_cleanup?: CacheCleanup | null;
     id: string | null;
     files: string[];
     has_zip: boolean;
@@ -33,8 +35,9 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
     const [defaults] = useState(loadExportPreferences);
     const [ids, setIds] = useState([current]), [languages, setLanguages] = useState(defaults.languages), [formats, setFormats] = useState(defaults.formats), [chinese, setChinese] = useState(defaults.chinese);
     const [languageTag, setLanguageTag] = useState(defaults.languageTag), [destination, setDestination] = useState(defaults.destination), [overwrite, setOverwrite] = useState(defaults.overwrite);
+    const [clearCache, setClearCache] = useState(defaults.clearCache);
     const [saved, setSaved] = useState(false);
-    useEffect(() => setSaved(false), [languages, formats, chinese, languageTag, destination, overwrite]);
+    useEffect(() => setSaved(false), [languages, formats, chinese, languageTag, destination, overwrite, clearCache]);
     const [sources, setSources] = useState<Record<string, Sources>>({}), [selection, setSelection] = useState<Record<string, {
         version: string;
         result_id: string | null;
@@ -72,7 +75,7 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
         setError("");
         setSaved(false);
         try {
-            await saveExportPreferences({ languages, formats, chinese, languageTag, destination, overwrite });
+            await saveExportPreferences({ languages, formats, chinese, languageTag, destination, overwrite, clearCache });
             setSaved(true);
         } catch (error) {
             setError(String(error));
@@ -87,12 +90,25 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
         setDelivery(null);
         try {
             setDelivery(await api<Delivery>(base + "/deliveries", "POST", { selections: selected.map(track_id => ({ track_id, ...selection[track_id] })), languages, formats, chinese,
-                language_tag: languageTag, destination, overwrite: destination !== "download" && overwrite }, { timeoutMs: 120000 }));
+                language_tag: languageTag, destination, clear_cache: clearCache, overwrite: destination !== "download" && overwrite }, { timeoutMs: 120000 }));
         }
         catch (e) {
             setError(String(e));
         }
         finally {
+            setBusy(false);
+        }
+    }
+    async function cleanCache() {
+        if (!delivery?.id) return;
+        setBusy(true);
+        setError("");
+        try {
+            const cleanup = await api<CacheCleanup>(base + "/deliveries/" + delivery.id + "/clear-cache", "POST");
+            setDelivery({...delivery, cache_cleanup: cleanup});
+        } catch (e) {
+            setError(String(e));
+        } finally {
             setBusy(false);
         }
     }
@@ -118,6 +134,8 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
       <label className="check"><input type="checkbox" disabled={busy} checked={overwrite} onChange={e => {setOverwrite(e.target.checked); setDelivery(null);}}/>{ui("覆寫已有的同名字幕檔案")}</label>
       <small>{overwrite ? ui("已啟用覆寫：同名檔案會被取代，包含目錄內已有的人工字幕。") : ui("預設保留已有的同名檔案；未寫入的項目仍可下載。")}</small>
     </>}
+    <label className="check"><input type="checkbox" disabled={busy} checked={clearCache} onChange={e => setClearCache(e.target.checked)}/>{ui("匯出成功後清理轉錄快取")}</label>
+    <small>{ui("保留原音與字幕。下次重新轉錄時會重建音訊快取。")}</small>
     <div className="batch-tools"><button type="button" disabled={busy || !languages.length || !formats.length} onClick={saveDefaults}>{ui("保存匯出設定為預設")}</button>{saved && <span role="status">{ui("已保存匯出預設")}</span>}</div>
     <small>{ui("下次開啟時沿用；音軌與結果版本需另選。設定保存在此瀏覽器。")}</small>
     {error && <p className="error" role="alert">{error}</p>}
@@ -127,6 +145,8 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
         {t.written.map(path => <p key={path} className="code">{ui("已寫入：")}{path}</p>)}
         {t.write_errors.map(item => <p key={item.path} className="error">{item.path} · {ui(item.error)}</p>)}
       </div>)}
+      {delivery.id && (!delivery.cache_cleanup || delivery.cache_cleanup.errors.length > 0) && <button type="button" disabled={busy} onClick={() => void cleanCache()}>{ui("清理已匯出音軌的轉錄快取")}</button>}
+      {delivery.cache_cleanup && <div><p>{ui("已清理轉錄快取")} · {(delivery.cache_cleanup.bytes / 1048576).toFixed(1)} MiB</p>{delivery.cache_cleanup.errors.map(item => <p className="error" key={item.track_id}>{tracks.find(t => t.id === item.track_id)?.name} · {ui(item.error)}</p>)}</div>}
       {delivery.id && <div className="file-list">{delivery.downloads.map(file => <a key={file.index} href={`/api${base}/deliveries/${delivery.id}/files/${file.index}`} download>{file.path}</a>)}</div>}
       {delivery.id && delivery.has_zip && <a className="download-button" href={`/api${base}/deliveries/${delivery.id}`} download>{ui("下載 ZIP（含匯出報告）")}</a>}
     </div>}

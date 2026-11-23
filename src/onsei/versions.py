@@ -15,6 +15,7 @@ from contextlib import closing
 from pathlib import Path
 
 from onsei.domain import Cue
+from onsei.translation_records import batch_records, expand_payload, store_payload, translation_values
 from onsei.translation_contract import polluted
 from onsei.translation_runs import TranslationRuns, run_summary
 
@@ -55,7 +56,7 @@ class VersionStore(TranslationRuns):
                     if statement.strip():
                         db.execute(statement)
                 for row in db.execute("SELECT DISTINCT track_id,version FROM cues").fetchall():
-                    self._capture_legacy(db, row[0], row[1])
+                    self._capture_legacy(db, row[0], row[1], compact=False)
                 db.execute("PRAGMA user_version=2")
             if db.execute("PRAGMA user_version").fetchone()[0] < 3:
                 backup = self.path / "project-before-result-times.db"
@@ -106,6 +107,39 @@ class VersionStore(TranslationRuns):
                 )
                 db.execute("PRAGMA user_version=4")
 
+            if db.execute("PRAGMA user_version").fetchone()[0] < 5:
+                db.commit()
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""CREATE TABLE IF NOT EXISTS translation_batches(
+                    result_id TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
+                    PRIMARY KEY(result_id,id)) WITHOUT ROWID""")
+                db.execute("""CREATE TRIGGER IF NOT EXISTS delete_translation_batches AFTER DELETE ON translation_versions
+                    BEGIN DELETE FROM translation_batches WHERE result_id=OLD.id; END""")
+                for (result,) in db.execute("SELECT id FROM translation_versions").fetchall():
+                    # Capture the small list of IDs before rewriting any variable-size rows.
+                    ids = db.execute(
+                        "SELECT cue_id FROM translation_cues WHERE result_id=?", (result,)
+                    ).fetchall()
+                    for (cue_id,) in ids:
+                        raw = db.execute(
+                            "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
+                            (result, cue_id),
+                        ).fetchone()[0]
+                        value = json.loads(raw)
+                        if value.get("translation"):
+                            db.execute(
+                                "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
+                                (store_payload(db, result, value), result, cue_id),
+                            )
+                db.execute("PRAGMA user_version=5")
+                db.commit()
+                # Vacated pages are reusable even if there is too little room to compact the file.
+                pages = db.execute("PRAGMA page_count").fetchone()[0]
+                free = db.execute("PRAGMA freelist_count").fetchone()[0]
+                page_size = db.execute("PRAGMA page_size").fetchone()[0]
+                if free > pages // 4 and shutil.disk_usage(self.path).free > pages * page_size * 2:
+                    db.execute("VACUUM")
+
     def transcript_versions(self, track_id):
         with self.db() as db:
             rows = db.execute(
@@ -153,7 +187,7 @@ class VersionStore(TranslationRuns):
             "training": cue.provenance.get("training"),
         }
 
-    def _capture_legacy(self, db, track_id, version, default_model="legacy"):
+    def _capture_legacy(self, db, track_id, version, default_model="legacy", *, compact=True):
         rows = db.execute(
             "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal", (track_id, version)
         ).fetchall()
@@ -193,7 +227,13 @@ class VersionStore(TranslationRuns):
                 last = slots[model]
                 db.execute(
                     "INSERT OR IGNORE INTO translation_cues VALUES (?,?,?)",
-                    (last, cue.id, json.dumps(self._zh_payload(cue), ensure_ascii=False)),
+                    (
+                        last,
+                        cue.id,
+                        store_payload(db, last, self._zh_payload(cue))
+                        if compact
+                        else json.dumps(self._zh_payload(cue), ensure_ascii=False),
+                    ),
                 )
             cue.zh_auto = cue.zh_override = None
             cue.translation_status = "pending"
@@ -228,7 +268,7 @@ class VersionStore(TranslationRuns):
                 "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?", (active, cue.id)
             ).fetchone()
             value = (
-                json.loads(row[0])
+                expand_payload(row[0], batch_records(db, active))
                 if row
                 else {"zh_auto": None, "zh_override": None, "translation_status": "pending"}
             )
@@ -254,10 +294,7 @@ class VersionStore(TranslationRuns):
         active = self._active_translation(db, cues[0].track_id, cues[0].version)
         if not active:
             return cues
-        values = {
-            r[0]: json.loads(r[1])
-            for r in db.execute("SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (active,))
-        }
+        values = translation_values(db, active)
         for cue in cues:
             value = values.get(
                 cue.id, {"zh_auto": None, "zh_override": None, "translation_status": "pending"}
@@ -282,7 +319,7 @@ class VersionStore(TranslationRuns):
         if active:
             db.execute(
                 "INSERT OR REPLACE INTO translation_cues VALUES (?,?,?)",
-                (active, cue.id, json.dumps(self._zh_payload(cue), ensure_ascii=False)),
+                (active, cue.id, store_payload(db, active, self._zh_payload(cue))),
             )
             base.zh_auto = base.zh_override = None
             base.translation_status = "pending"
@@ -315,9 +352,12 @@ class VersionStore(TranslationRuns):
             WHERE v.track_id=? AND v.version=?""",
             (track_id, version),
         ).fetchall()
+        batches = {result: batch_records(db, result) for result in {r[0] for r in rows}}
         for result_id, cue_id, raw in rows:
             value = json.loads(raw)
-            if value.get("zh_override") is None and (value.get("translation") or {}).get("document_key"):
+            if value.get("zh_override") is None and (
+                expand_payload(raw, batches[result_id]).get("translation") or {}
+            ).get("document_key"):
                 value["translation_status"] = "stale"
                 db.execute(
                     "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
@@ -333,9 +373,10 @@ class VersionStore(TranslationRuns):
             ORDER BY json_extract(b.payload,'$.ordinal')""",
             (result_id,),
         ).fetchall()
+        batches = batch_records(db, result_id)
         for cue_id, raw, source in rows:
             value = json.loads(raw)
-            references = (value.get("translation") or {}).get("document_history", [])
+            references = (expand_payload(raw, batches).get("translation") or {}).get("document_history", [])
             if value.get("zh_override") is None and any(r.get("id") in affected for r in references):
                 value["translation_status"] = "stale"
                 affected.add(str(json.loads(source)["ordinal"] + 1))
@@ -471,6 +512,7 @@ class VersionStore(TranslationRuns):
                     "metadata": list(metadata),
                     "run": self.run_metadata(identity, db),
                     "cues": [dict(r) for r in rows],
+                    "translation_batches": batch_records(db, identity),
                 },
                 ensure_ascii=False,
             ),

@@ -11,6 +11,7 @@ from filelock import FileLock
 from onsei.domain import Cue, Track
 from onsei.versions import VersionStore
 from onsei.util import digest
+from onsei.translation_records import compact_snapshot
 from onsei.translation_contract import dependency_window, polluted
 
 
@@ -372,7 +373,7 @@ class Store(VersionStore):
                 options.setdefault(
                     "input_snapshots",
                     {
-                        t: self.input_snapshot(t, v)
+                        t: compact_snapshot(self.input_snapshot(t, v))
                         for t, v in options["transcript_versions"].items()
                         if v and self.cues(t, v)
                     },

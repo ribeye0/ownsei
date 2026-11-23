@@ -8,6 +8,7 @@ import uuid
 
 from onsei.domain import Cue
 from onsei.util import digest
+from onsei.translation_records import compact_snapshot, intern_batch, store_payload, translation_values
 from onsei.preferences import translation_preferences
 from onsei.terminology import project_terms
 
@@ -70,12 +71,12 @@ class TranslationRuns:
                 (identity, json.dumps(value, ensure_ascii=False)),
             )
 
-    def input_snapshot(self, track_id, version=None, result_id=None, db=None):
+    def input_snapshot(self, track_id, version=None, result_id=None, db=None, *, diagnostics=True):
         if db is None:
             self.ensure_legacy_result(track_id)
             with self.db() as connection:
                 connection.execute("BEGIN")
-                return self.input_snapshot(track_id, version, result_id, connection)
+                return self.input_snapshot(track_id, version, result_id, connection, diagnostics=diagnostics)
         track = json.loads(db.execute("SELECT payload FROM tracks WHERE id=?", (track_id,)).fetchone()[0])
         version = version or track["active_version"]
         settings = json.loads(db.execute("SELECT payload FROM settings WHERE key='project'").fetchone()[0])
@@ -98,16 +99,7 @@ class TranslationRuns:
         ]
         if not cues:
             raise ValueError("No Japanese transcript")
-        values = (
-            {
-                r[0]: json.loads(r[1])
-                for r in db.execute(
-                    "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (result_id,)
-                )
-            }
-            if result_id
-            else {}
-        )
+        values = translation_values(db, result_id, diagnostics=diagnostics) if result_id else {}
         for cue in cues:
             if result_id:
                 value = values.get(cue.id, {})
@@ -178,7 +170,7 @@ class TranslationRuns:
                 "status": "pending",
                 "parent_result_id": snapshot["result_id"],
                 "source_key": snapshot["source_key"],
-                "source_snapshot": snapshot,
+                "source_snapshot": compact_snapshot(snapshot),
                 "coverage": [],
                 "issues": [],
                 "patches": [],
@@ -205,7 +197,7 @@ class TranslationRuns:
                     cue.review_flags = [f for f in cue.review_flags if not f.startswith("translation_")]
                 db.execute(
                     "INSERT INTO translation_cues VALUES (?,?,?)",
-                    (identity, cue.id, json.dumps(self._zh_payload(cue), ensure_ascii=False)),
+                    (identity, cue.id, store_payload(db, identity, self._zh_payload(cue))),
                 )
             # Do not steal the user's current view if they switched while queued.
             track = json.loads(db.execute("SELECT payload FROM tracks WHERE id=?", (track_id,)).fetchone()[0])
@@ -242,12 +234,7 @@ class TranslationSession:
         with self.store.db() as db:
             if not db.execute("SELECT 1 FROM translation_versions WHERE id=?", (self.identity,)).fetchone():
                 raise ValueError("Translation result was deleted")
-            values = {
-                r[0]: json.loads(r[1])
-                for r in db.execute(
-                    "SELECT cue_id,payload FROM translation_cues WHERE result_id=?", (self.identity,)
-                )
-            }
+            values = translation_values(db, self.identity)
             cues = []
             for raw in self.snapshot["cues"]:
                 cue = Cue.model_validate(raw)
@@ -288,8 +275,14 @@ class TranslationSession:
                 raise ValueError("Translation result was deleted")
             if run[0] == "stale":
                 raise ValueError("來源已更新，停止保存過期結果")
+            last_metadata = batch_ref = None
             for cue in cues:
-                value = json.dumps(self.store._zh_payload(cue), ensure_ascii=False)
+                payload = self.store._zh_payload(cue)
+                metadata = payload.get("translation")
+                if metadata is not last_metadata:
+                    last_metadata = metadata
+                    batch_ref = intern_batch(db, self.identity, metadata) if metadata else None
+                value = store_payload(db, self.identity, payload, batch_ref)
                 if db.execute(
                     """UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?
                        AND json_extract(payload, '$.zh_override') IS NULL""",

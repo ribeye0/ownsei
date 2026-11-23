@@ -5,11 +5,39 @@ import json
 import math
 import subprocess
 import sys
+import shutil
+from filelock import FileLock, Timeout
 from onsei import backend
 from onsei.models import model_dir, worker_env, SPEECH_FILES
 from onsei.processes import stop_process
-from onsei.util import atomic_json, digest
+from onsei.util import STATE, atomic_json, digest
 from onsei.vad_settings import normalize_settings
+
+
+def retire_legacy_vad(state):
+    """Only reclaim the Python 3.12 environments created by the previous installers."""
+    env = state / "vad"
+    if not env.is_dir() or state.resolve() != state.absolute() or env.resolve() != env or env.is_mount():
+        return False
+    try:
+        with FileLock(state / "runtime-install.lock", timeout=0):
+            marker = json.loads((env / "onsei-runtime.json").read_text())
+            locks = {
+                "1a06ca3ee7348be3ed252286f4a920393f5feeea55da710af01076912c07271d",
+                "d560131ada36627d05010de833b184a54aca8504d7e326501661ee5372f075bb",
+            }
+            if (
+                not isinstance(marker, dict)
+                or marker.get("python") != "3.12"
+                or marker.get("lock_sha256") not in locks
+                or not (env / "pyvenv.cfg").is_file()
+                or (env / "onsei-runtime-installing.json").exists()
+            ):
+                return False
+            shutil.rmtree(env)
+            return True
+    except (OSError, ValueError, Timeout):
+        return False
 
 
 def validate_regions(regions, duration_ms):
@@ -117,7 +145,10 @@ def regions(audio, directory, duration_ms, settings, progress):
         for r in data["regions"]
         if r["start"] < duration_ms / 1000
     ]
-    return validate_regions(values, duration_ms), {
+    validated = validate_regions(values, duration_ms)
+    if engine == "firered" and data.get("runtime") == "ncnn CPU" and retire_legacy_vad(STATE):
+        progress({"stage": "vad", "message": "已清理舊版 VAD Python 環境"})
+    return validated, {
         "engine": engine,
         "settings": config,
         "report": str(output),

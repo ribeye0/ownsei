@@ -1,6 +1,7 @@
 """One-time, idempotent import of the Vulkan prototype without changing its files."""
 
 from __future__ import annotations
+from onsei.translation_records import store_payload
 import json
 import shutil
 from pathlib import Path
@@ -262,7 +263,7 @@ def _translation(
             }
             db.execute(
                 "INSERT INTO translation_cues VALUES (?,?,?)",
-                (identity, cue.id, json.dumps(payload, ensure_ascii=False)),
+                (identity, cue.id, store_payload(db, identity, payload)),
             )
         metadata = {
             "stage": "draft",

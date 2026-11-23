@@ -143,3 +143,34 @@ def test_cue_api_is_read_only_for_active_model_jobs_only(store, monkeypatch, tmp
     job["status"] = "failed"
     store.save_job(job)
     assert client.patch("/api/projects/busy/cues/c0", json=body).status_code == 200
+
+
+def test_shared_batch_provenance_survives_edit_snapshot_and_migration(store):
+    from onsei.translation_records import compact_snapshot, expand_snapshot
+
+    snapshot = store.input_snapshot("t")
+    result = store.new_translation_run(snapshot, "index-nativelong-9b")
+    session = TranslationSession(store, snapshot, result)
+    cues = session.cues("t")
+    metadata = {"context_ids": ["c0", "c1", "c2"], "model": "index-nativelong-9b"}
+    for cue in cues:
+        cue.zh_auto, cue.translation_status = "好的", "translated"
+        cue.provenance["translation"] = metadata
+    session.save_generated_batch(cues)
+    store.edit("c0", {"zh_override": "人工"})
+    before = store.input_snapshot("t")
+    assert expand_snapshot(compact_snapshot(before)) == before
+    with store.db(write=True) as db:
+        assert db.execute("SELECT count(*) FROM translation_batches").fetchone()[0] == 1
+        rows = db.execute("SELECT cue_id,payload FROM translation_cues").fetchall()
+        for cue_id, raw in rows:
+            row = json.loads(raw)
+            assert row.pop("batch_ref") and "translation" not in row
+            row["translation"] = metadata
+            db.execute("UPDATE translation_cues SET payload=? WHERE cue_id=?", (json.dumps(row), cue_id))
+        db.execute("DROP TABLE translation_batches")
+        db.execute("PRAGMA user_version=4")
+    assert Store(store.path).input_snapshot("t") == before
+    store.delete_translation("t", result)
+    with store.db() as db:
+        assert db.execute("SELECT count(*) FROM translation_batches").fetchone()[0] == 0

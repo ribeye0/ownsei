@@ -66,6 +66,7 @@ def prepare_delivery(
     language_tag=False,
     destination="download",
     overwrite=False,
+    clear_cache=False,
 ):
     if not selections or not languages or not formats:
         raise ValueError("請選擇音軌、語言及格式")
@@ -75,6 +76,7 @@ def prepare_delivery(
         or chinese not in ("as-result", "zh-Hant", "zh-Hans")
         or destination not in DESTINATIONS
         or type(language_tag) is not bool
+        or type(clear_cache) is not bool
         or type(overwrite) is not bool
     ):
         raise ValueError("不支援的匯出選項")
@@ -99,14 +101,19 @@ def prepare_delivery(
             report.append(entry)
             try:
                 snapshot = store.input_snapshot(
-                    selected["track_id"], selected.get("version"), selected.get("result_id")
+                    selected["track_id"],
+                    selected.get("version"),
+                    selected.get("result_id"),
+                    diagnostics="jsonl" in formats,
                 )
                 track = Track.model_validate(snapshot["track"])
                 entry["name"] = track.name
                 entry["source"] = track.source
                 cues = [Cue.model_validate(c) for c in snapshot["cues"]]
                 metadata = store.run_metadata(snapshot["result_id"])
-                if chinese != "as-result":
+                original = cues
+                if chinese != "as-result" and set(formats) != {"jsonl"}:
+                    cues = [cue.model_copy() for cue in original]
                     convert = OpenCC("t2s" if chinese == "zh-Hans" else "s2t")
                     for cue in cues:
                         if cue.zh_auto is not None:
@@ -120,26 +127,24 @@ def prepare_delivery(
                 with TemporaryDirectory(prefix=".delivery-", dir=directory) as work:
                     try:
                         if (zh_blocked or no_chinese) and set(languages) != {"ja"}:
-                            _render(track, cues, Path(work), True)
+                            _render(track, cues, Path(work), True, languages, formats, original)
                             entry["error"] = (
                                 "未選中文結果；只匯出有效日文"
                                 if no_chinese
                                 else "中文來源待更新或審校尚未完成；只匯出有效日文"
                             )
                         else:
-                            _render(track, cues, Path(work), set(languages) == {"ja"})
+                            _render(
+                                track,
+                                cues,
+                                Path(work),
+                                set(languages) == {"ja"},
+                                languages,
+                                formats,
+                                original,
+                            )
                     except ValueError as error:
                         entry["error"] = str(error)
-                    original = [Cue.model_validate(c) for c in snapshot["cues"]]
-                    for audit in Path(work).glob("*.jsonl"):
-                        audit.write_text(
-                            "".join(
-                                json.dumps({**c.model_dump(), "ja": c.ja, "zh": c.zh}, ensure_ascii=False)
-                                + "\n"
-                                for c in original
-                            ),
-                            encoding="utf-8",
-                        )
                     dependency = {
                         "track_id": track.id,
                         "version": snapshot["version"],
@@ -178,7 +183,7 @@ def prepare_delivery(
                         relative = (Path(folder) / name).as_posix() if counts[name] > 1 else name
                         staged = root / str(len(outputs)) / name
                         staged.parent.mkdir()
-                        shutil.copyfile(path, staged)
+                        path.replace(staged)
                         outputs.append(
                             {
                                 "name": name,
@@ -257,11 +262,15 @@ def prepare_delivery(
                 "created_at": time.time(),
                 "filename": slug(store.settings()["title"]) + ".zip",
                 "outputs": outputs,
+                "cleanable_tracks": [
+                    e["track_id"] for e in report if e["files"] and not e["error"] and not e["write_errors"]
+                ],
                 "has_zip": has_zip,
             },
         )
         return {
             "id": identity,
+            "cache_cleanup": cleanup_delivery_pcm(store, identity) if clear_cache else None,
             "files": [o["archive_path"] for o in outputs],
             "tracks": report,
             "has_zip": has_zip,
@@ -277,7 +286,9 @@ def prepare_delivery(
 
 
 def verify_dependency(store, dependency):
-    snapshot = store.input_snapshot(dependency["track_id"], dependency["version"], dependency["result_id"])
+    snapshot = store.input_snapshot(
+        dependency["track_id"], dependency["version"], dependency["result_id"], diagnostics=False
+    )
     metadata = store.run_metadata(snapshot["result_id"])
     if (
         cue_digest([Cue.model_validate(c) for c in snapshot["cues"]]) != dependency["digest"]
@@ -291,6 +302,20 @@ def delivery_metadata(store, identity):
         raise ValueError("Invalid delivery ID")
     directory = store.path / "exports" / ".downloads"
     return directory, json.loads((directory / (identity + ".json")).read_text())
+
+
+def cleanup_delivery_pcm(store, identity):
+    from onsei.audio import clear_pcm
+
+    _, manifest = delivery_metadata(store, identity)
+    removed = 0
+    errors = []
+    for track_id in manifest.get("cleanable_tracks", []):
+        try:
+            removed += clear_pcm(store, store.track(track_id))
+        except (ValueError, OSError) as error:
+            errors.append({"track_id": track_id, "error": str(error)})
+    return {"bytes": removed, "errors": errors}
 
 
 def delivery_download(store, identity):

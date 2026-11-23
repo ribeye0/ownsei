@@ -7,6 +7,7 @@ from onsei.models import DEFAULT_NAMES, REGISTRY, TRANSLATION_MODELS
 from onsei.inference import Llama
 from onsei.translation import translate
 from onsei.translation_config import model_config, model_prompt_version
+from onsei.translation_records import expand_snapshot
 from onsei.translation_runs import TranslationSession, source_key
 from onsei.preferences import pin_translation_settings, updated_preferences
 from onsei.context import translation_options as resolve_options
@@ -27,7 +28,7 @@ def process_translation(
 ):
     if model not in TRANSLATION_MODELS:
         raise ValueError("Unsupported translation model")
-    snapshot = snapshot or store.input_snapshot(track_id)
+    snapshot = expand_snapshot(snapshot) if snapshot else store.input_snapshot(track_id)
     settings = dict(snapshot["settings"])
     if translation_context is not None:
         settings.update(translation_context)

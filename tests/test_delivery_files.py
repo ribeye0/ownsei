@@ -295,3 +295,49 @@ def test_lrc_timestamp_carries_minutes_and_preserves_long_recordings():
 def test_removed_markdown_formats_are_rejected(store, kind):
     with pytest.raises(ValueError, match="不支援的匯出選項"):
         prepare_delivery(store, [selection(store)], ["bilingual"], [kind])
+
+
+def test_vtt_only_skips_other_renderers_and_audit(store, monkeypatch):
+    import onsei.export as export
+
+    render = export._render
+    seen = []
+
+    def inspect(track, cues, directory, *args):
+        render(track, cues, directory, *args)
+        seen.extend(p.name for p in directory.iterdir())
+
+    monkeypatch.setattr("onsei.delivery._render", inspect)
+    prepare_delivery(store, [selection(store)], ["zh"], ["vtt"])
+    assert len(seen) == 1 and seen[0].endswith(".zh-TW.vtt")
+
+
+def test_cleanup_only_rebuildable_pcm_with_successful_export(store):
+    from onsei.audio import pcm_use_lock
+    from onsei.source import signature
+    from onsei.delivery import cleanup_delivery_pcm
+
+    track = store.track("track")
+    source = Path(track.source)
+    track.source_signature = signature(source)
+    store.save_track(track)
+    audio = store.path / "audio"
+    audio.mkdir(exist_ok=True)
+    cache, proxy = audio / "track.wav", audio / "track-stereo.mp3"
+    cache.write_bytes(b"cached")
+    proxy.write_bytes(b"proxy")
+    result = prepare_delivery(store, [selection(store)], ["zh"], ["vtt"])
+    assert cache.exists()
+    with pcm_use_lock(store, track):
+        assert cleanup_delivery_pcm(store, result["id"])["errors"]
+    assert cleanup_delivery_pcm(store, result["id"]) == {"bytes": 6, "errors": []}
+    assert cleanup_delivery_pcm(store, result["id"]) == {"bytes": 0, "errors": []}
+    assert proxy.is_file() and source.is_file()
+    cache.write_bytes(b"cached")
+    Path(track.source).with_suffix(".vtt").touch()
+    failed = prepare_delivery(
+        store, [selection(store)], ["zh"], ["vtt"], destination="source", clear_cache=True
+    )
+    assert failed["tracks"][0]["write_errors"] and cache.exists()
+    success = prepare_delivery(store, [selection(store)], ["zh"], ["vtt"], clear_cache=True)
+    assert success["cache_cleanup"]["bytes"] == 6 and not cache.exists()

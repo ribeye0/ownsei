@@ -12,7 +12,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-from onsei.audio import chunks, pcm
+from onsei.audio import chunks, pcm, pcm_use_lock
 from onsei.domain import Cue, subtitle_ja
 from onsei.models import (
     ASR_MODELS,
@@ -289,30 +289,31 @@ def transcribe(
         validate_source(store, track)
         store.activate_transcript(track.id, version)
         return existing
-    audio = pcm(store, track)
-    directory = store.path / "cache" / track_id / cache_version
-    directory.mkdir(parents=True, exist_ok=True)
-    parts = chunks(audio, limit_ms)
-    processed_duration_ms = parts[-1]["owned_end_ms"]
-    segmentation = None
-    if backend.current()["vad_engine"] != "none":
-        from onsei.segmentation import regions
+    with pcm_use_lock(store, track):
+        audio = pcm(store, track)
+        directory = store.path / "cache" / track_id / cache_version
+        directory.mkdir(parents=True, exist_ok=True)
+        parts = chunks(audio, limit_ms)
+        processed_duration_ms = parts[-1]["owned_end_ms"]
+        segmentation = None
+        if backend.current()["vad_engine"] != "none":
+            from onsei.segmentation import regions
 
-        settings = dict(filter_options["settings"])
-        if backend.current()["vad_engine"] == "silero":
-            settings["max_gain_db"] = 0
-        parts, segmentation = regions(audio, directory, processed_duration_ms, settings, progress)
-    for part in parts:
-        part["output"] = str(directory / f"asr-{part['index']:05d}.json")
-    invoke(model_dir(model), audio, parts, directory, progress)
-    spans = merge_spans(native_track_spans(parts))
-    vad_info = None
-    if filter_options["enabled"]:
-        from onsei.asr_filter import detect_and_filter
+            settings = dict(filter_options["settings"])
+            if backend.current()["vad_engine"] == "silero":
+                settings["max_gain_db"] = 0
+            parts, segmentation = regions(audio, directory, processed_duration_ms, settings, progress)
+        for part in parts:
+            part["output"] = str(directory / f"asr-{part['index']:05d}.json")
+        invoke(model_dir(model), audio, parts, directory, progress)
+        spans = merge_spans(native_track_spans(parts))
+        vad_info = None
+        if filter_options["enabled"]:
+            from onsei.asr_filter import detect_and_filter
 
-        spans, vad_info = detect_and_filter(
-            audio, directory, processed_duration_ms, spans, filter_options, progress
-        )
+            spans, vad_info = detect_and_filter(
+                audio, directory, processed_duration_ms, spans, filter_options, progress
+            )
     cues = []
     for span in spans:
         if not subtitle_ja(span["text"]).strip():

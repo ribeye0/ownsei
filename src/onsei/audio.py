@@ -8,7 +8,7 @@ import unicodedata
 from pathlib import Path
 from typing import Callable
 
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from onsei.domain import Track
 from onsei.storage import Store
@@ -160,6 +160,37 @@ def _import_audio(store: Store, source: Path, prefer_wav: bool, progress) -> lis
         report("checked", files_done=index + 1, bytes_done=base_done + size)
     report("completed")
     return added
+
+
+def pcm_use_lock(store, track):
+    return FileLock(store.path / f".pcm-use-{track.id}.lock")
+
+
+def clear_pcm(store, track):
+    """Release the reproducible mono WAV only while it has no ASR reader."""
+    directory = store.path / "audio"
+    path = directory / f"{track.id}.wav"
+    if (
+        directory.is_symlink()
+        or directory.resolve().parent != store.path
+        or path.resolve().parent != directory
+    ):
+        raise ValueError("轉錄快取路徑無效")
+    try:
+        with (
+            pcm_use_lock(store, track).acquire(timeout=0),
+            FileLock(store.path / f".pcm-{track.id}.lock", timeout=0),
+        ):
+            if not path.exists():
+                return 0
+            validate_source(store, track)
+            if path.is_symlink() or not path.is_file() or path.samefile(track.source):
+                raise ValueError("轉錄快取與原音檔無法安全區分")
+            size = path.stat().st_size
+            path.unlink()
+            return size
+    except Timeout:
+        raise ValueError("轉錄正在使用音訊快取，請稍後再試") from None
 
 
 def pcm(store: Store, track: Track) -> Path:

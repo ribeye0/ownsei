@@ -6,6 +6,7 @@ export type ExportPreferences = {
   languageTag: boolean;
   destination: string;
   overwrite: boolean;
+  clearCache: boolean;
 };
 const key = "ownsei:export-preferences:v1";
 const languages = ["ja", "zh", "bilingual"];
@@ -23,6 +24,7 @@ export function normalizeExportPreferences(value: unknown): ExportPreferences {
     languageTag: v.languageTag === true,
     destination: typeof v.destination === "string" && ["download", "source", "sub"].includes(v.destination) ? v.destination : "download",
     overwrite: v.overwrite === true,
+    clearCache: v.clearCache === true,
   };
 }
 export function loadExportPreferences(): ExportPreferences {

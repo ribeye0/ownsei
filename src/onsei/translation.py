@@ -343,6 +343,24 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
                 used = set(document_context.get("history_ids", []))
                 history = [row for row in history if row["id"] in used]
             writable = [c for c in batch if c.zh_override is None]
+            batch_metadata = {
+                "model": model,
+                **preferences,
+                "revision": REGISTRY[model][1],
+                "cache_key": key,
+                "automatic_names": data["automatic_names"],
+                "prompt_version": model_prompt_version(model),
+                "config": config,
+                **({"document_key": document_key} if document is not None else {}),
+                **({"document_history": history} if history else {}),
+                "execution": execution,
+                "context_ids": [
+                    n.id
+                    for n in cues
+                    if document is not None
+                    or batch[0].ordinal - CONTEXT_CUES <= n.ordinal <= batch[-1].ordinal + CONTEXT_CUES
+                ],
+            }
             for c in writable:
                 c.zh_auto = converter.convert(translations[c.id])
                 c.translation_status = "translated"
@@ -350,24 +368,7 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
                 c.review_flags = [
                     flag for flag in c.review_flags if not flag.startswith("translation_")
                 ] + semantic_flags[c.id]
-                c.provenance["translation"] = {
-                    "model": model,
-                    **preferences,
-                    "revision": REGISTRY[model][1],
-                    "cache_key": key,
-                    "automatic_names": data["automatic_names"],
-                    "prompt_version": model_prompt_version(model),
-                    "config": config,
-                    **({"document_key": document_key} if document is not None else {}),
-                    **({"document_history": history} if history else {}),
-                    "execution": execution,
-                    "context_ids": [
-                        n.id
-                        for n in cues
-                        if document is not None
-                        or batch[0].ordinal - CONTEXT_CUES <= n.ordinal <= batch[-1].ordinal + CONTEXT_CUES
-                    ],
-                }
+                c.provenance["translation"] = batch_metadata
             saved = store.save_generated_batch(writable)
             for c in writable:
                 if c.id not in saved:

@@ -756,6 +756,7 @@ class DeliveryRequest(BaseModel):
     language_tag: bool = False
     destination: str = "download"
     overwrite: bool = False
+    clear_cache: bool = False
 
 
 @app.post("/api/projects/{p}/deliveries")
@@ -771,7 +772,18 @@ def delivery(p: str, body: DeliveryRequest):
         language_tag=body.language_tag,
         destination=body.destination,
         overwrite=body.overwrite,
+        clear_cache=body.clear_cache,
     )
+
+
+@app.post("/api/projects/{p}/deliveries/{identity}/clear-cache")
+def clear_delivery_cache(p: str, identity: str):
+    from onsei.delivery import cleanup_delivery_pcm
+
+    try:
+        return cleanup_delivery_pcm(project(p), identity)
+    except FileNotFoundError:
+        raise HTTPException(404, "找不到匯出紀錄") from None
 
 
 @app.get("/api/projects/{p}/deliveries/{identity}")
