@@ -16,6 +16,8 @@ import webbrowser
 
 from filelock import FileLock, Timeout
 
+from onsei.updater import RESTART_EXIT
+
 DEFAULT_PORT = 8878
 
 
@@ -58,7 +60,6 @@ def main():
     if args.verbose:
         command.append("--verbose")
     from onsei.update_install import apply, install_gate, rollback, setup, update_dir
-    from onsei.updater import RESTART_EXIT
 
     release = (root / "release.json").is_file()
     cache = update_dir(root)
@@ -127,6 +128,9 @@ def serve(command, root, env, port, opening, pending=False):
     try:
         for _ in range(120):
             if process.poll() is not None:
+                # An already-open tab can request installation before our first probe.
+                if process.returncode == RESTART_EXIT and not pending:
+                    return RESTART_EXIT
                 raise RuntimeError(f"後端提早結束（{process.returncode}）")
             try:
                 with urllib.request.urlopen(url + ("api/update" if pending else ""), timeout=0.5) as response:

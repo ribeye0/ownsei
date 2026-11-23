@@ -246,3 +246,71 @@ def test_browser_loads_new_frontend_after_restart_with_matching_file_metadata(tm
         response = web.get("/", headers={"If-None-Match": old.headers["etag"]})
         assert response.text == "new"
         assert response.headers["cache-control"] == "no-store"
+
+
+def test_native_launcher_restarts_on_same_port_after_manual_install(tmp_path):
+    """Run the real launcher, API, platform installer invocation and restart handshake."""
+    import json
+    import os
+    from pathlib import Path
+    import shutil
+    import socket
+    import subprocess
+    import sys
+
+    import psutil
+
+    platform = "windows" if os.name == "nt" else "linux"
+    root, offer = staged(tmp_path, platform)
+    scripts = root / "scripts"
+    scripts.mkdir()
+    launcher = scripts / "launch.py"
+    shutil.copy2(Path(__file__).resolve().parents[1] / "scripts/launch.py", launcher)
+    # Dependencies are supplied by the test environment. Keep this test offline.
+    (scripts / "install.ps1").write_text("Set-Content -Path setup-ran -Value ok\n")
+    (scripts / "install.sh").write_text("echo ok > setup-ran\n")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    log = tmp_path / "launcher.log"
+    with log.open("w") as output, httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3) as client:
+        process = subprocess.Popen(
+            [sys.executable, launcher, "--port", str(port), "--no-browser"],
+            cwd=root,
+            stdout=output,
+            stderr=output,
+        )
+
+        def wait_for_version(expected):
+            for _ in range(300):
+                assert process.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+                try:
+                    state = client.get("/api/update").json()
+                    if state["current"] == expected:
+                        return state
+                    if state["error"]:
+                        pytest.fail(state["error"])
+                except (httpx.TransportError, json.JSONDecodeError):
+                    pass
+                time.sleep(0.1)
+            pytest.fail(log.read_text(encoding="utf-8", errors="replace"))
+
+        try:
+            assert wait_for_version("0.2.9")["phase"] == "ready"
+            project = client.post("/api/projects", json={"title": "update test"}).json()["id"]
+            assert client.post("/api/update/install", json={}).json()["phase"] == "installing"
+            assert wait_for_version(offer["version"])["phase"] == "idle"
+            assert (root / "setup-ran").is_file()
+            assert client.get("/api/projects").json()[0]["id"] == project
+        finally:
+            if process.poll() is None:
+                children = psutil.Process(process.pid).children(recursive=True)
+                for child in children:
+                    try:
+                        child.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                psutil.wait_procs(children, timeout=5)
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=10)
