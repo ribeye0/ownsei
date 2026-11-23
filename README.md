@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/public/ownsei-logo.webp" alt="Ownsei 深藍色標誌" width="96">
+  <img src="frontend/public/ownsei-logo-dark.webp" alt="Ownsei 淺藍色標誌" width="96">
 </p>
 
 <h1 align="center">Ownsei</h1>
