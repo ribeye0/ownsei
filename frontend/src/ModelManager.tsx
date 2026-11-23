@@ -2,7 +2,7 @@ import {useEffect, useState} from "react";
 import {api} from "./api";
 import {Modal} from "./Modal";
 import {t as ui} from "./i18n";
-type Job = {status:string; stage:string; message:string; error:string|null; bytes_done:number; bytes_total:number; files_done:number; files_total:number};
+type Job = {status:string; stage:string; message:string; error:string|null; bytes_done:number; bytes_total:number; transfer_bytes_done?:number; files_done:number; files_total:number};
 export type ManagedModel = {id:string; name:string; role:string; parameters:string; format:string; basic:boolean; repo:string; revision:string; url:string|null; license_url:string|null; local?:boolean; local_kind?:"gguf"|"lora"|null; download_bytes_estimate:number; vram_estimate:string; installed:boolean; runtime_ready:boolean; ready:boolean; dependencies:string[]; bytes:number; source_bytes:number; job:Job|null};
 type Environment = {ready:boolean; checks:{name:string;ok:boolean;detail:string;required:boolean}[]};
 const active = (job:Job|null) => !!job && ["queued","running"].includes(job.status);
@@ -70,8 +70,14 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
         <p className="code">{model.url?<a href={model.url} target="_blank" rel="noreferrer">{model.repo}</a>:model.repo} · {model.revision.slice(0,12)}{model.license_url&&<> · <a href={model.license_url} target="_blank" rel="noreferrer">{ui("模型說明與授權")}</a></>}</p>
         {model.local&&<small>{model.local_kind==="gguf"?ui("本機完整 GGUF，尚無線上下載。準備按鈕會校驗並使用本機發布檔案；刪除模型不會刪除 artifacts 內的發布包。"):ui("本機 LoRA 發布包，尚無線上下載。首次安裝請執行 ownsei models install-adapter /path/to/package；準備按鈕可沿用本機來源。")}</small>}
         {model.job&&<div className="model-progress"><p>{ui(model.job.message)} {model.job.error&&<span className="error">{model.job.error}</span>}</p>
-          {active(model.job)&&(model.job.stage==="download"&&model.job.bytes_total>0?<><progress max={model.job.bytes_total} value={Math.min(model.job.bytes_done,model.job.bytes_total)}/><span>{size(model.job.bytes_done)} / {size(model.job.bytes_total)}{ui("（目前已知檔案總量）")}</span></>:<progress/>)}
-          {active(model.job)&&model.job.files_total>0&&<small>{ui("檔案／校驗進度：")}{model.job.files_done}/{model.job.files_total}</small>}
+          {active(model.job)&&<>
+            {model.job.stage==="download"?<>
+              <progress aria-label={ui("模型檔案準備進度")} max={model.job.bytes_total||undefined} value={model.job.bytes_total>0&&model.job.bytes_done>0?Math.min(model.job.bytes_done,model.job.bytes_total):undefined}/>
+              {model.job.bytes_total>0&&<span>{ui("檔案寫入：")}{size(model.job.bytes_done)} / {size(model.job.bytes_total)}{ui("（目前已知檔案總量）")}</span>}
+              {model.job.transfer_bytes_done!==undefined&&<small>{ui("網路已接收：")}{size(model.job.transfer_bytes_done)}{ui("（快取與壓縮會影響實際接收量）")}</small>}
+            </>:<progress/>}
+            {model.job.files_total>0&&<small>{model.job.stage==="verify"?ui("校驗進度："):ui("已完成檔案：")}{model.job.files_done}/{model.job.files_total}</small>}
+          </>}
         </div>}
         <div className="manager-actions"><button disabled={busy||active(model.job)} onClick={()=>void download([model.id])}>{model.ready?ui("檢查／修復"):model.local?ui("準備本機模型"):ui("下載／準備")}</button>
           {active(model.job)&&<button disabled={busy} onClick={()=>void cancel(model.id)}>{ui("取消下載")}</button>}

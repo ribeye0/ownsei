@@ -78,6 +78,61 @@ def test_hub_progress_reports_real_byte_counters_and_dynamic_totals():
     assert any(v["bytes_done"] == 4 and v["bytes_total"] == 20 for v in counters)
 
 
+def test_network_and_file_write_progress_are_independent_and_always_flushed():
+    events = []
+    bar = models.progress_bar(events.append)
+    # Match snapshot_download's dual bars; network transfer has no reliable total.
+    with (
+        bar(total=1000, unit="B", desc="Downloading bytes", miniters=10**9) as network,
+        bar(total=1000, unit="B", desc="Reconstructing", miniters=10**9) as files,
+    ):
+        network.update(250)
+        files.update(10)
+        network.update(250)
+        files.total = 2000  # More files became known.
+        files.refresh()
+    bar.finish()
+    last = events[-1]
+    assert last["transfer_bytes_done"] == 500
+    assert last["bytes_done"] == 10 and last["bytes_total"] == 2000
+    assert "transfer_bytes_total" not in last  # Do not invent network completion %.
+    count = len(events)
+    network.refresh()
+    files.close()
+    assert len(events) == count  # Delayed cleanup cannot revert the next phase.
+
+
+def test_progress_updates_do_not_depend_on_terminal_redraw(monkeypatch):
+    events = []
+    bar = models.progress_bar(events.append)
+    clock = [0.0]
+    monkeypatch.setattr(models.time, "monotonic", lambda: clock[0])
+    with bar(total=1000, unit="B", desc="Downloading bytes", miniters=10**9) as network:
+        for i in range(1, 4):
+            clock[0] = float(i)
+            network.update(100)
+    assert [v["transfer_bytes_done"] for v in events if v["transfer_bytes_done"] > 0][:3] == [100, 200, 300]
+
+
+def test_download_reporter_closes_before_verification_even_when_download_fails(local, monkeypatch):
+    events = []
+    held = []
+
+    def snapshot(**kwargs):
+        progress = kwargs["tqdm_class"](total=1000, unit="B", desc="Reconstructing")
+        progress.update(100)
+        held.append(progress)
+        raise RuntimeError("connection lost")
+
+    monkeypatch.setattr(models, "snapshot_download", snapshot)
+    with pytest.raises(RuntimeError, match="connection lost"):
+        models.download_snapshot("repo", "revision", local, ["model.gguf"], events.append)
+    assert events[-1]["bytes_done"] == 100
+    length = len(events)
+    held[0].close()
+    assert len(events) == length
+
+
 def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
     state = job("whisper-ja-760m")
     events = []
@@ -96,6 +151,23 @@ def test_worker_preserves_stages_and_completion_and_failure(local, monkeypatch):
     monkeypatch.setattr(models, "prepare", lambda *_: (_ for _ in ()).throw(RuntimeError("network failure")))
     manager.worker("index-translate-9b", state["id"])
     assert manager.read_job("index-translate-9b")["error"] == "network failure"
+
+
+def test_worker_resets_phase_specific_counters_before_verification(local, monkeypatch):
+    state = job("whisper-ja-760m")
+    phases = []
+
+    def prepare(name, progress):
+        progress({"stage": "download", "bytes_done": 100, "bytes_total": 100, "transfer_bytes_done": 80, "files_done": 4, "files_total": 4})
+        progress({"stage": "verify", "files_done": 0, "files_total": 2})
+        phases.append(json.loads(manager.paths(name)[1].read_text()))
+        install_receipt(name)
+
+    monkeypatch.setattr(models, "prepare", prepare)
+    manager.worker("whisper-ja-760m", state["id"])
+    assert phases[0]["stage"] == "verify"
+    assert phases[0]["bytes_done"] == phases[0]["bytes_total"] == phases[0]["transfer_bytes_done"] == 0
+    assert phases[0]["files_done"] == 0 and phases[0]["files_total"] == 2
 
 
 def test_cancelled_bootstrap_cannot_start_and_late_progress_cannot_revive_it(local, monkeypatch):

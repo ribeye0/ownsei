@@ -5,6 +5,8 @@ import subprocess
 import json
 import shutil
 import errno
+import threading
+import time
 from pathlib import Path
 from filelock import FileLock
 from huggingface_hub import snapshot_download
@@ -172,25 +174,61 @@ def notify(progress, stage, **details):
 def progress_bar(progress):
     from tqdm.auto import tqdm
 
+    counters = {"bytes_done": 0, "bytes_total": 0, "transfer_bytes_done": 0, "files_done": 0, "files_total": 0}
+    guard = threading.RLock()
+    last_report = 0.0
+    finished = False
+
     class ReportProgress(tqdm):
         def __init__(self, *args, **kwargs):
+            self._transfer = "download" in kwargs.get("desc", "").lower() or "transfer" in kwargs.get("desc", "").lower()
             kwargs["disable"] = False
             super().__init__(*args, **kwargs)
 
+        def _report(self, *, force=False):
+            nonlocal last_report
+            if not hasattr(self, "n"):
+                return
+            with guard:
+                if finished:
+                    return
+                done, total = max(0, int(self.n)), max(0, int(self.total or 0))
+                if self.unit == "B":
+                    if self._transfer:
+                        # Xet network traffic can differ from final file size.
+                        # Its internal tqdm total is only an estimate, never a percentage.
+                        counters["transfer_bytes_done"] = done
+                    else:
+                        counters.update(bytes_done=done, bytes_total=total)
+                else:
+                    counters.update(files_done=done, files_total=total)
+                now = time.monotonic()
+                if force or now - last_report >= 0.2:
+                    notify(progress, "download", **counters, message="下載與寫入模型檔案")
+                    last_report = now
+
+        def update(self, n=1):
+            result = super().update(n)
+            # tqdm may suppress refreshes via miniters; updates must still reach UI.
+            self._report()
+            return result
+
         def refresh(self, *args, **kwargs):
             result = super().refresh(*args, **kwargs)
-            if hasattr(self, "n"):
-                if self.unit == "B" and (not self.desc.startswith("Downloading")):
-                    notify(
-                        progress,
-                        "download",
-                        bytes_done=int(self.n),
-                        bytes_total=int(self.total or 0),
-                        message="下載模型檔案（總量會隨檔案資訊更新）",
-                    )
-                elif self.unit != "B":
-                    notify(progress, "download", files_done=int(self.n), files_total=int(self.total or 0))
+            self._report()
             return result
+
+        def close(self):
+            super().close()
+            self._report(force=True)
+
+        @staticmethod
+        def finish():
+            nonlocal finished
+            with guard:
+                if not finished:
+                    notify(progress, "download", **counters, message="下載與寫入模型檔案")
+                    finished = True
 
     return ReportProgress
 
@@ -205,17 +243,23 @@ def download_snapshot(repo, revision, directory, patterns, progress, *, force=Fa
         files_done=0,
         files_total=0,
     )
-    kwargs = {"tqdm_class": progress_bar(progress)} if progress is not None else {}
-    return snapshot_download(
-        repo_id=repo,
-        revision=revision,
-        local_dir=directory,
-        allow_patterns=patterns,
-        cache_dir=ROOT / ".tools/hf-cache",
-        max_workers=4,
-        force_download=force,
-        **kwargs,
-    )
+    reporter = progress_bar(progress) if progress is not None else None
+    kwargs = {"tqdm_class": reporter} if reporter else {}
+    try:
+        return snapshot_download(
+            repo_id=repo,
+            revision=revision,
+            local_dir=directory,
+            allow_patterns=patterns,
+            cache_dir=ROOT / ".tools/hf-cache",
+            max_workers=4,
+            force_download=force,
+            **kwargs,
+        )
+    finally:
+        if reporter:
+            # Late progress-bar destruction must not revert verification to download.
+            reporter.finish()
 
 
 def check_manifest(name, progress=None, *, verify=True):

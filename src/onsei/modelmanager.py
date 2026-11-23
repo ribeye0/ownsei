@@ -161,6 +161,7 @@ def start_download(names):
                 "pid": None,
                 "bytes_done": 0,
                 "bytes_total": 0,
+                "transfer_bytes_done": 0,
                 "files_done": 0,
                 "files_total": 0,
                 "message": "等待模型準備",
@@ -308,6 +309,7 @@ def worker(name, identity):
             changed = state["stage"] != update.get("stage", state["stage"])
             if changed:
                 print(json.dumps(update, ensure_ascii=False), flush=True)
+                state.update(bytes_done=0, bytes_total=0, transfer_bytes_done=0, files_done=0, files_total=0)
             state.update(update, updated_at=time.time())
             if changed or time.monotonic() - last_write > 0.2:
                 atomic_json(path, state)
