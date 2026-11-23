@@ -1,58 +1,36 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/ownsei-logo-dark.png">
-    <img src="frontend/public/ownsei-logo.png" alt="Ownsei" width="96">
-  </picture>
-</p>
+![Ownsei 架構：語音區段偵測、日文轉錄、上下文翻譯與字幕匯出](docs/architecture.svg)
 
 # Ownsei — 日語音聲字幕工具
 
-Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 Index-NativeLong 參照前後文翻譯成中文，在指定譯文風格的同時保持長文用詞的一致性，改善前後人名或稱呼被翻譯成不同詞彙的問題。
-轉錄與翻譯皆在本地執行，並透過 Vulkan 加速，支援 NVIDIA 、AMD 和 Intel 各家的顯卡（VRAM 需 8GB 以上）。
+Ownsei 先將日語音軌轉錄成帶時間戳的逐字稿，再參照同一音軌的上下文翻譯成繁體或簡體中文。轉錄與翻譯皆在本機透過 Vulkan 執行，支援 NVIDIA、AMD 與 Intel 顯卡（顯存需求為 8 GB 以上）。
 
-**[下載 Linux／Windows 版](https://github.com/ribeye0/ownsei/releases)**
+[下載 Linux／Windows 版](https://github.com/ribeye0/ownsei/releases) · [英文架構圖](docs/architecture.en.svg)
 
-![Ownsei 淺色主介面，從左到右是專案、音軌和批量任務進度，底部為播放器](docs/screenshots/batch-progress.png)
+## 語音切分與轉錄
 
-畫面中正在翻譯第 4 軌，前 3 軌已匯出，後 2 軌仍在等候。
+1. **音訊前處理**　FFmpeg 將輸入音軌轉為 16 kHz、單聲道、16-bit PCM，供語音偵測與轉錄共用。同一音軌有 WAV 與 MP3 兩種版本時，目錄匯入優先選用 WAV。
+2. **語音切分**　預設用 FireRedVAD 與 ncnn 在 CPU 上偵測語音區段。判定門檻、分句靜音長度與區段前後保留時間均可調整，也可改用 Silero VAD 或固定時間窗。
+3. **日文轉錄**　speech.cpp 透過 Vulkan 執行 Haas JA，將各區段的辨識結果與時間戳換算到原音軌的時間軸。模型預設為 F16，也提供較省顯存的 Q8_0。
 
-## 從一段對話做出可以回聽的字幕
+## 上下文翻譯
 
-音聲作品裡，角色常省略主詞，也會在對話中交替使用名字、暱稱和敬稱。單看一句「黙っちゃった」，很難決定該譯成「怎麼不說話了？」還是「他沉默了」。這個選擇取決於前一句在問誰，以及眼前的人有沒有回答。Ownsei 把**帶時間戳的日文逐字稿**保留下來：翻譯模型能讀到來回對話，聽眾也能從一句中文跳回原音，自己判斷角色的語氣。
+預設使用 llama.cpp 執行 **Index-Nailong-9B**（介面名稱為 NativeLong 9B），量化格式為 Q4_K_M。日文逐字稿獨立保存，同一份轉錄可以重譯、切換模型或比較不同譯文版本。
 
-![Ownsei 架構圖。上半部由 speech.cpp 執行 Haas JA F16 轉錄日文，下半部由 llama.cpp 執行 Index-Nailong-9B 翻譯中文。](docs/architecture.svg)
+- **分批與上下文**　每批最多翻譯 64 句。容量足夠時，模型可參照整條音軌的日文。超出預算時，先移除較早的翻譯紀錄，再取待譯句前後的連續日文。上下文上限預設為 64K tokens，可在 8K 到 256K 間分級選擇。
+- **跨批一致性**　NativeLong 預設參照待譯句之前已完成的日中對照。全局術語表可跨作品共用，專案術語表可指定角色名與暱稱，翻譯風格指引則用來調整語氣與用詞。
+- **選用模型**　Index-Translate 9B 與 Ownsei SFT48 預設搭配 Qwen3.5 4B 整理人物譯名，使用者指定的術語優先。SFT48 使用日語音聲台詞與人工中文字幕微調，著重成人向用詞及字幕標點。
 
-**圖 1　轉錄與翻譯流程。** 實線沿著音軌、日文逐字稿、中文譯文到字幕匯出。紫色虛線是翻譯模型可以參照的資料，其中右側回路將前批譯文帶回下一批，讓先前採用的稱呼能沿用到後面的對話。[English diagram](docs/architecture.en.svg)
+## 字幕輸出
 
-## 方法與模型
+每句譯文沿用對應日文的時間戳，可搜尋、回聽與校訂。匯出可選日文、中文或雙語，支援 VTT、SRT、LRC、ASS 與 JSONL。字幕預設沿用音檔名稱，例如 `01 プロローグ.wav` 對應 `01 プロローグ.vtt`，可存至音檔目錄或其下的 `sub/`。
 
-| 階段 | 預設做法 | 可以調整的地方 |
-| --- | --- | --- |
-| 語音切分 | FireRedVAD 透過 ncnn 在 CPU 上找出有人聲的區段，再送入轉錄模型。 | 耳語被切得太碎時可降低門檻，也可換成 Silero VAD 或使用固定時間窗。 |
-| 日文轉錄 | speech.cpp 執行 Haas JA F16，使用模型輸出的時間戳組成逐字稿。 | 顯存較少時可選 Q8_0。辨識有誤時可先回聽、修正日文，再重譯該段。 |
-| 中文翻譯 | llama.cpp 執行 Index-NativeLong 9B，分批讀入待譯句、前後日文與前批中文。預設上下文容量為 64K。 | 可選繁體或簡體，調整上下文容量（8K–256K）及譯文風格。常用詞可在全局共用，角色名與暱稱可在專案內指定。 |
+## 效能實測
 
-**同一份逐字稿可以試不同譯風。** 除了 NativeLong，也可選 Index-Translate 9B，或以日語音聲台詞與人工中文字幕微調的 Ownsei SFT48。SFT48 著重於成人向音聲的用詞與字幕標點。這兩個模型預設搭配 Qwen3.5 4B 整理人物譯名，使用者指定的術語優先。每次翻譯獨立保存，可以切換版本，比較同一句話的不同譯法。
+以 Radeon RX 9070 XT 在 Linux Vulkan v0.2.1 處理一段 22 秒的日語對話。測試使用固定時間窗、Haas JA F16、NativeLong 9B Q4_K_M 與 8K 上下文，關閉人物譯名記憶。計時從已匯入的音軌開始。
 
-## 端到端實測
-
-在 Linux Vulkan 發布包 **0.2.1** 上，以 **Radeon RX 9070 XT** 處理一段 22 秒的日語對話。這次使用固定時間窗、Haas JA F16 與 NativeLong 9B Q4_K_M，上下文設為 8K，關閉人物譯名記憶。
-
-| 日文轉錄 | 中文翻譯 | 整個任務（含匯出） | 輸出 |
+| 日文轉錄 | 中文翻譯 | 總耗時（含匯出） | 輸出 |
 | ---: | ---: | ---: | --- |
-| 0.74 秒 | 4.66 秒 | **5.57 秒** | 7 句有時間戳的日中雙語字幕 |
-
-耗時取自這次任務的起訖紀錄，從已匯入的音軌開始計時。整部作品的翻譯速度還會受前文長度、批次數量及顯存影響。
-
-## 從整部作品找到一句台詞
-
-匯入作品目錄後，可先挑一軌試譯，再勾選其餘音軌批量處理。同一音軌若同時有 WAV 與 MP3，預設只匯入 WAV。任務紀錄會列出每一軌的進度。
-
-只記得譯文中的幾個字，也能在逐字稿裡搜尋，點時間戳跳回原音。展開播放器就能邊聽邊看當句的日文和中文，也可以倒回五秒，再聽一次角色的語氣。
-
-![雙語播放器在 00:41 顯示當句日文與中文字幕，下方可調倍速、前後跳五秒及調整音量](docs/screenshots/bilingual-player.png)
-
-匯出可選日文、中文或雙語，支援 VTT、SRT、LRC、ASS 與 JSONL。例如為 `01 プロローグ.wav` 匯出中文 VTT，預設檔名就是 `01 プロローグ.vtt`。字幕可直接存到音檔旁，或集中放在 `sub/`。
+| 0.74 秒 | 4.66 秒 | 5.57 秒 | 7 句日中雙語字幕 |
 
 ## 安裝
 
@@ -92,6 +70,12 @@ Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自�
 先關閉所有 Ownsei 後端，等下載與處理任務結束。Linux 在發布包內執行 `bash uninstall.sh`，Windows 雙擊 `Uninstall.cmd`。畫面會列出安裝、模型與快取位置，輸入 `DELETE` 後才會移除。想先看逐檔清單，可執行 `bash uninstall.sh --dry-run` 或 `.\Uninstall.cmd --dry-run`。
 
 清理範圍包含這份發布包、專用執行環境，以及同帳號共用的 Ownsei 設定、模型與下載快取。工具會檢查目前模型庫和舊版預設位置；若曾切換到其他模型庫，可加上 `--models-dir "舊模型庫的絕對路徑"`，多個位置可重複指定。安裝目錄的 `workspace/`、外部專案、原始音檔和匯出的字幕會保留。瀏覽器記住的上次選取音軌與專案屬於網站資料，可從瀏覽器清除。
+
+## 介面截圖
+
+![批量處理主介面](docs/screenshots/batch-progress.png)
+
+![雙語播放器](docs/screenshots/bilingual-player.png)
 
 ## 開發
 
