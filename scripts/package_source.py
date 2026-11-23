@@ -26,6 +26,8 @@ ROOT_FILES = (
     "ownsei.sh",
     "Ownsei.cmd",
     "Install.cmd",
+    "Uninstall.cmd",
+    "uninstall.sh",
 )
 FRONTEND_FILES = ("index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
 DIRECTORIES = {

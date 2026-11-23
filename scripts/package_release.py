@@ -26,6 +26,8 @@ RUNTIME_SCRIPTS = {
     "install_state.py",
     "start.sh",
     "install.ps1",
+    "uninstall.ps1",
+    "uninstall.py",
     "start.ps1",
     "launch.py",
     "choose_path.ps1",
@@ -131,6 +133,7 @@ Use `--port NUMBER` to require a specific port.
 The UI and native inference engines are included. First setup downloads Python
 3.12 and application dependencies; Node.js is not required. Models are downloaded
 from Model management after startup. Choose or move the model library there.
+Uninstall: close Ownsei, then run `{"Uninstall.cmd" if platform == "windows" else "bash uninstall.sh"}` (preview with `--dry-run`).
 Projects stay in workspace/. Settings, installed models and downloads have separate
 locations. See README.md for platform defaults, preference files and upgrades.
 
