@@ -18,8 +18,8 @@ ROOT_FILES = (
     "README.md",
     "docs/architecture.svg",
     "docs/architecture.en.svg",
-    "docs/screenshots/batch-progress.png",
-    "docs/screenshots/bilingual-player.png",
+    "docs/screenshots/batch-progress.webp",
+    "docs/screenshots/bilingual-player.webp",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     ".gitignore",
@@ -70,7 +70,7 @@ def audit(root: Path, files: list[Path]) -> list[dict]:
             issues.append({"file": str(relative), "reason": "symlink"})
         elif not path.is_file():
             issues.append({"file": str(relative), "reason": "missing required file"})
-        elif path.suffix != ".png":
+        elif path.suffix not in {".png", ".webp"}:
             try:
                 value = path.read_text(encoding="utf-8")
             except UnicodeError:

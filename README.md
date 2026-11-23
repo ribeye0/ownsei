@@ -59,7 +59,9 @@ Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自�
 
 ## 架構
 
-![Ownsei 架構：語音區段偵測、日文轉錄、上下文翻譯與字幕匯出](docs/architecture.svg)
+<p align="center">
+  <a href="docs/architecture.svg"><img src="docs/architecture.svg" alt="Ownsei 架構：語音區段偵測、日文轉錄、上下文翻譯與字幕匯出" width="900"></a>
+</p>
 
 [英文架構圖](docs/architecture.en.svg)
 
@@ -85,25 +87,23 @@ Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自�
 
 - **分批與上下文**　每批最多翻譯 64 句。容量足夠時，模型可參照整條音軌的日文。超出預算時，先移除較早的翻譯紀錄，再取待譯句前後的連續日文。上下文上限預設為 64K tokens，可在 8K 到 256K 間分級選擇。
 - **跨批一致性**　NativeLong 預設參照待譯句之前已完成的日中對照。術語與風格指引會隨待譯句送入模型。
-- **選用模型**　Index-Translate 9B 與 Ownsei SFT48 預設搭配 Qwen3.5 4B 整理人物譯名，使用者指定的術語優先。SFT48 使用日語音聲台詞與人工中文字幕微調，著重成人向用詞及字幕標點。
+- **選用模型**　Index-Translate 9B 與 Ownsei SFT48 預設搭配 Qwen3.5 4B 整理人物譯名，使用者指定的術語優先。
+
+Ownsei SFT48 是我用日語音聲台詞與人工中文字幕微調的 Index-Translate 9B，主要調整成人向用詞、角色口吻與字幕標點。和原版相比，兩者的差異主要在譯風，哪個譯法更貼切仍要看當句台詞。[模型卡與 GGUF 下載](https://huggingface.co/yzk9/index-translate-asmr-9B)
 
 ### 字幕輸出
 
 每句譯文沿用對應日文的時間戳，可搜尋、回聽與校訂。匯出可選日文、中文或雙語，支援 VTT、SRT、LRC、ASS 與 JSONL。字幕預設沿用音檔名稱，例如 `01 プロローグ.wav` 對應 `01 プロローグ.vtt`，可存至音檔目錄或其下的 `sub/`。
 
-### 效能實測
-
-以 Radeon RX 9070 XT 在 Linux Vulkan v0.2.1 處理一段 22 秒的日語對話。測試使用固定時間窗、Haas JA F16、NativeLong 9B Q4_K_M 與 8K 上下文，關閉人物譯名記憶。計時從已匯入的音軌開始。
-
-| 日文轉錄 | 中文翻譯 | 總耗時（含匯出） | 輸出 |
-| ---: | ---: | ---: | --- |
-| 0.74 秒 | 4.66 秒 | 5.57 秒 | 7 句日中雙語字幕 |
-
 ## 介面截圖
 
-![批量處理主介面](docs/screenshots/batch-progress.png)
+<p align="center">
+  <a href="docs/screenshots/batch-progress.webp"><img src="docs/screenshots/batch-progress.webp" alt="批量處理主介面" width="900"></a>
+</p>
 
-![雙語播放器](docs/screenshots/bilingual-player.png)
+<p align="center">
+  <a href="docs/screenshots/bilingual-player.webp"><img src="docs/screenshots/bilingual-player.webp" alt="雙語播放器" width="900"></a>
+</p>
 
 ## 開發
 
@@ -116,4 +116,4 @@ bash scripts/check.sh  # 執行檢查、測試與前端建置
 
 ## License
 
-[MIT](LICENSE)
+Ownsei 採用 [MIT](LICENSE)。隨附的 [llama.cpp](third_party/llama.cpp-LICENSE) 與 [speech.cpp](third_party/speech.cpp-LICENSE) 也採用 MIT。其他元件與模型授權見[第三方聲明](THIRD_PARTY_NOTICES.md)。
