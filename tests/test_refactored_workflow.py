@@ -33,7 +33,6 @@ def test_catalog_contains_only_the_inference_scope():
         "index-nativelong-9b",
         "index-translate-9b",
         "index-translate-ownsei-sft48-q4-k-m",
-        "index-translate-ownsei-sft48-q5-k-m",
     }
     assert JobRequest().asr == "haas-ja-v1.0-f16" and JobRequest().translation == DEFAULT_TRANSLATION
 

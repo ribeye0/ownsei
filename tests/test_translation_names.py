@@ -147,7 +147,7 @@ def test_user_terms_and_disabled_names_override_automatic_aliases():
     assert effective_glossary(settings, ["はるくん"])["はる"] == "叶尔"
 
 
-@pytest.mark.parametrize("model", ["index-translate-9b", "index-translate-ownsei-sft48-q5-k-m", NATIVE_LONG])
+@pytest.mark.parametrize("model", ["index-translate-9b", "index-translate-ownsei-sft48-q4-k-m", NATIVE_LONG])
 def test_every_adapter_receives_name_and_preserves_source(model):
     data = {
         "notes": "",

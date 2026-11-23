@@ -11,8 +11,6 @@ from pathlib import Path
 from filelock import FileLock
 from huggingface_hub import snapshot_download
 from onsei.util import ROOT, STATE, atomic_json, file_hash, gpu_lock_path
-from onsei.local_models import LOCAL_GGUFS
-from onsei.local_models import LOCAL_MODELS as LOCAL_MODELS
 from onsei.diskspace import GIB, RESERVE, capacity_message, existing_directory, require_space
 
 from onsei.catalog import (
@@ -269,7 +267,16 @@ def check_manifest(name, progress=None, *, verify=True):
         metadata = json.loads((directory / "onsei-model.json").read_text())
         if not isinstance(metadata, dict):
             return False
-        if metadata.get("repo") != REGISTRY[name][0] or metadata.get("revision") != REGISTRY[name][1]:
+        # The published Q4 is byte-identical to the former local SFT48 release.
+        # Accept its pinned receipt, then migrate it after a full checksum pass.
+        legacy_sft48 = (
+            name == "index-translate-ownsei-sft48-q4-k-m"
+            and metadata.get("repo") == "local:Ownsei/Index-Translate-9B-SFT48-GGUF"
+            and metadata.get("revision") == GGUF_SHA256[name]
+        )
+        if not legacy_sft48 and (
+            metadata.get("repo") != REGISTRY[name][0] or metadata.get("revision") != REGISTRY[name][1]
+        ):
             return False
         if name in WHISPER_CONVERSIONS and metadata.get("conversion") != WHISPER_CONVERSION_CONFIG:
             return False
@@ -306,6 +313,8 @@ def check_manifest(name, progress=None, *, verify=True):
             if Path(filename).name != filename or not path.is_file() or file_hash(path) != checksum:
                 return False
             notify(progress, "verify", message=f"校驗 {filename}", files_done=i + 1, files_total=len(hashes))
+        if legacy_sft48:
+            atomic_json(directory / "onsei-model.json", {**metadata, "repo": REGISTRY[name][0], "revision": REGISTRY[name][1]})
         return True
     except (OSError, ValueError, TypeError, AttributeError):
         return False
@@ -329,44 +338,6 @@ def _prepare(name, progress):
         binary("speech")
     elif kind:
         setup_runtime(kind, progress)
-    if name in LOCAL_GGUFS:
-        p = model_dir(name)
-        if check_manifest(name, progress):
-            return p
-        spec = LOCAL_GGUFS[name]
-        candidates = [
-            ROOT / "models/.sources" / name / GGUF[name],
-            ROOT / "artifacts/huggingface" / spec["package"] / GGUF[name],
-        ]
-        source = next((path for path in candidates if path.is_file()), None)
-        if source is None:
-            raise ValueError(f"尚無線上下載；請將 {GGUF[name]} 放到 models/.sources/{name}/，再準備本機模型")
-        notify(progress, "verify", message=f"校驗本機完整 GGUF：{GGUF[name]}")
-        if file_hash(source) != GGUF_SHA256[name]:
-            raise ValueError("Local GGUF checksum mismatch")
-        p.mkdir(parents=True, exist_ok=True)
-        temporary = p / (GGUF[name] + ".tmp")
-        try:
-            temporary.unlink(missing_ok=True)
-            try:
-                os.link(source, temporary)
-            except OSError as error:
-                if error.errno not in (errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP):
-                    raise
-                shutil.copy2(source, temporary)
-            temporary.replace(p / GGUF[name])
-        finally:
-            temporary.unlink(missing_ok=True)
-        atomic_json(
-            p / "onsei-model.json",
-            {
-                "repo": repo,
-                "revision": revision,
-                "file": GGUF[name],
-                "sha256": {GGUF[name]: GGUF_SHA256[name]},
-            },
-        )
-        return p
     if name == "firered-vad":
         from onsei.vad_worker import HASHES
 
@@ -401,7 +372,7 @@ def _prepare(name, progress):
     if check_manifest(name, progress):
         return p
     patterns = (
-        [GGUF[name], "*.json", "README.md"]
+        [GGUF[name], "README.md", "LICENSE*", "NOTICE*"]
         if name in GGUF
         else ["*.json", "*.safetensors", "*.bin", "*.txt", "*.model"]
     )

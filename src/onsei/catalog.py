@@ -1,8 +1,5 @@
 """Pinned model catalog. Static metadata only; no downloads or runtime imports."""
 
-from onsei.local_models import LOCAL_GGUFS
-from onsei.local_models import LOCAL_MODELS as LOCAL_MODELS
-
 REGISTRY = {
     "firered-vad": ("FireRedTeam/FireRedVAD", "7990aaccc6b7aec1e527743bd30201f2c4a03b8c", "vad"),
     "qwen3.5-4b-names": ("unsloth/Qwen3.5-4B-GGUF", "e87f176479d0855a907a41277aca2f8ee7a09523", None),
@@ -29,13 +26,12 @@ REGISTRY = {
         "6a495efa273b70f41ac94ce649b1bdb2465dc520",
         None,
     ),
+    "index-translate-ownsei-sft48-q4-k-m": (
+        "yzk9/index-translate-asmr-9B",
+        "260747b5571a480f9418b7f3d641ee6af75f34c8",
+        None,
+    ),
 }
-REGISTRY.update(
-    {
-        name: (f"local:Ownsei/Index-Translate-9B-SFT{spec['step']}-GGUF", spec["sha256"], None)
-        for name, spec in LOCAL_GGUFS.items()
-    }
-)
 SPEECH_FILES = {
     "haas-ja-v1.0": (
         "Haas-616M-ja-v1.0-Q8_0.gguf",
@@ -65,14 +61,14 @@ GGUF = {
     "qwen3.5-4b-names": "Qwen3.5-4B-Q4_K_M.gguf",
     "index-translate-9b": "Index-Translate-9B.Q4_K_M.gguf",
     "index-nativelong-9b": "Index-Nailong-9B.Q4_K_M.gguf",
+    "index-translate-ownsei-sft48-q4-k-m": "Ownsei-Index-Translate-9B-SFT48.Q4_K_M.gguf",
 }
-GGUF.update({name: spec["filename"] for name, spec in LOCAL_GGUFS.items()})
 GGUF_SHA256 = {
     "qwen3.5-4b-names": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
     "index-translate-9b": "9cc6758b0007f4cbf42ea3400768cbff91ae74ef8d640e467158348426d33713",
     "index-nativelong-9b": "8ae7b1b66f52a854a3bfb65fff30ffc6bbda6db071b3c4d98972c2a3e61525f7",
+    "index-translate-ownsei-sft48-q4-k-m": "72aeb84450fa702f9d21efa4c427f9cc12e7b9c5a01a6120414444052dd80f97",
 }
-GGUF_SHA256.update({name: spec["sha256"] for name, spec in LOCAL_GGUFS.items()})
 DEFAULT_ASR = "haas-ja-v1.0-f16"
 DEFAULT_TRANSLATION = "index-nativelong-9b"
 DEFAULT_NAMES = "qwen3.5-4b-names"
@@ -129,19 +125,14 @@ MODEL_INFO = {
         5.63,
         "64K 已實測；上下文可選 8K–256K，顯存需求隨容量增加",
     ),
+    "index-translate-ownsei-sft48-q4-k-m": (
+        "Ownsei SFT48 · Q4_K_M（完整 GGUF）",
+        "translation",
+        "9B",
+        "GGUF Q4_K_M · SFT 已合併",
+        5.780090304,
+        "約 6–9 GiB",
+    ),
 }
-MODEL_INFO.update(
-    {
-        name: (
-            f"Ownsei SFT{spec['step']} · {spec['quantization']}（完整 GGUF）",
-            "translation",
-            "9B",
-            f"GGUF {spec['quantization']} · SFT 已合併",
-            spec["bytes"] / 10**9,
-            "約 6–9 GiB" if spec["quantization"] == "Q4_K_M" else "約 7–10 GiB",
-        )
-        for name, spec in LOCAL_GGUFS.items()
-    }
-)
 
 TRANSLATION_MODELS = frozenset(GGUF) - {DEFAULT_NAMES}

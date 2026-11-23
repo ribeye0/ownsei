@@ -3,7 +3,7 @@ import {api} from "./api";
 import {Modal} from "./Modal";
 import {t as ui} from "./i18n";
 type Job = {status:string; stage:string; message:string; error:string|null; bytes_done:number; bytes_total:number; transfer_bytes_done?:number; files_done:number; files_total:number};
-export type ManagedModel = {id:string; name:string; role:string; parameters:string; format:string; basic:boolean; repo:string; revision:string; url:string|null; license_url:string|null; local?:boolean; local_kind?:"gguf"|"lora"|null; download_bytes_estimate:number; vram_estimate:string; installed:boolean; runtime_ready:boolean; ready:boolean; dependencies:string[]; bytes:number; source_bytes:number; job:Job|null};
+export type ManagedModel = {id:string; name:string; role:string; parameters:string; format:string; basic:boolean; repo:string; revision:string; url:string; license_url:string; download_bytes_estimate:number; vram_estimate:string; installed:boolean; runtime_ready:boolean; ready:boolean; dependencies:string[]; bytes:number; source_bytes:number; job:Job|null};
 type Environment = {ready:boolean; checks:{name:string;ok:boolean;detail:string;required:boolean}[]};
 const active = (job:Job|null) => !!job && ["queued","running"].includes(job.status);
 function size(value:number) {const units=["B","KiB","MiB","GiB"];const index=value>0?Math.min(3,Math.floor(Math.log(value)/Math.log(1024))):0;return (value/1024**index).toFixed(index?2:0)+" "+units[index];}
@@ -59,7 +59,7 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
       </details>
       {error&&<p className="error" role="alert">{error}</p>}
       {deleting&&<div className="model-delete-confirm" role="alertdialog" aria-label={ui("確認刪除模型")}><p>{ui("確定刪除模型？")}{deleting.name}</p>
-        <p>{ui(deleting.local?"會刪除已安裝的 GGUF 與本機來源暫存；共用基底、專案及原始發布包保留。之後需重新匯入發布包。":"會刪除模型權重與此模型的下載／轉換暫存；專案、字幕及共用執行環境保留，之後可重新下載。處理或準備任務進行中會阻止刪除。")}</p>
+        <p>{ui("會刪除模型權重與此模型的下載／轉換暫存；專案、字幕及共用執行環境保留，之後可重新下載。處理或準備任務進行中會阻止刪除。")}</p>
         <button disabled={busy} onClick={()=>setDeleting(null)}>{ui("取消")}</button><button className="danger" disabled={busy} onClick={()=>void remove()}>{ui("確認刪除模型")}</button>
       </div>}
       <div className="model-list">{models.map(model=><section key={model.id} className="model-card">
@@ -68,7 +68,6 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
         <p>{ui("下載來源約 ")}{size(model.download_bytes_estimate)} · {ui("顯存估算：")}{ui(model.vram_estimate)} · {ui("本機檔案：")}{size(model.bytes+model.source_bytes)}</p>
         {model.dependencies.length>0&&<small>{ui("會一併準備必要依賴：")}{model.dependencies.join(", ")}</small>}
         <p className="code">{model.url?<a href={model.url} target="_blank" rel="noreferrer">{model.repo}</a>:model.repo} · {model.revision.slice(0,12)}{model.license_url&&<> · <a href={model.license_url} target="_blank" rel="noreferrer">{ui("模型說明與授權")}</a></>}</p>
-        {model.local&&<small>{model.local_kind==="gguf"?ui("本機完整 GGUF，尚無線上下載。準備按鈕會校驗並使用本機發布檔案；刪除模型不會刪除 artifacts 內的發布包。"):ui("本機 LoRA 發布包，尚無線上下載。首次安裝請執行 ownsei models install-adapter /path/to/package；準備按鈕可沿用本機來源。")}</small>}
         {model.job&&<div className="model-progress"><p>{ui(model.job.message)} {model.job.error&&<span className="error">{model.job.error}</span>}</p>
           {active(model.job)&&<>
             {model.job.stage==="download"?<>
@@ -79,7 +78,7 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
             {model.job.files_total>0&&<small>{model.job.stage==="verify"?ui("校驗進度："):ui("已完成檔案：")}{model.job.files_done}/{model.job.files_total}</small>}
           </>}
         </div>}
-        <div className="manager-actions"><button disabled={busy||active(model.job)} onClick={()=>void download([model.id])}>{model.ready?ui("檢查／修復"):model.local?ui("準備本機模型"):ui("下載／準備")}</button>
+        <div className="manager-actions"><button disabled={busy||active(model.job)} onClick={()=>void download([model.id])}>{model.ready?ui("檢查／修復"):ui("下載／準備")}</button>
           {active(model.job)&&<button disabled={busy} onClick={()=>void cancel(model.id)}>{ui("取消下載")}</button>}
           <button disabled={busy||active(model.job)||!(model.bytes+model.source_bytes)} onClick={()=>{setDeleting(model);setError("");}}>{ui("刪除模型")}</button>
           {model.job&&<button disabled={busy} onClick={()=>setLogModel(logModel===model.id?"":model.id)}>{logModel===model.id?ui("收起紀錄"):ui("詳細紀錄")}</button>}

@@ -24,7 +24,7 @@ bash scripts/start.sh
 .venv/bin/ownsei run workspace/demo --context 32768
 ```
 
-Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自原生 token。Whisper JA 760M／1.5B 為選用模型，使用 CT2 CPU INT8；CUDA 環境另以 `ownsei runtime whisper-cuda` 準備。翻譯可選 NativeLong、Index Translate、SFT48 Q4_K_M／Q5_K_M，上下文 8K–256K；人物譯名、全局／專案術語與風格指引均可配置。SFT48 目前從本機 GGUF 安裝。
+Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自原生 token。Whisper JA 760M／1.5B 為選用模型，使用 CT2 CPU INT8；CUDA 環境另以 `ownsei runtime whisper-cuda` 準備。翻譯可選 NativeLong、Index Translate、[SFT48 Q4_K_M](https://huggingface.co/yzk9/index-translate-asmr-9B)，上下文 8K–256K；人物譯名、全局／專案術語與風格指引均可配置。模型由模型管理介面下載。
 
 支援單軌／批量處理、取消與恢復任務、雙語回聽及校訂、繁／簡字幕、VTT／SRT／LRC／ASS／JSONL 匯出、ZIP 與寫回音檔目錄。各次轉錄及翻譯獨立保存，人工校訂使用版本檢查避免覆寫。
 

@@ -104,14 +104,8 @@ def catalog():
                 "basic": name in BASIC,
                 "repo": repo,
                 "revision": revision,
-                "url": None
-                if name in models.LOCAL_MODELS
-                else f"https://huggingface.co/{repo}/tree/{revision}",
-                "license_url": None
-                if name in models.LOCAL_MODELS
-                else f"https://huggingface.co/{repo}/blob/{revision}/README.md",
-                "local": name in models.LOCAL_MODELS,
-                "local_kind": "gguf" if name in models.LOCAL_GGUFS else None,
+                "url": f"https://huggingface.co/{repo}/tree/{revision}",
+                "license_url": f"https://huggingface.co/{repo}/blob/{revision}/README.md",
                 "download_bytes_estimate": int(size * 10**9),
                 "vram_estimate": vram,
                 "installed": have,
