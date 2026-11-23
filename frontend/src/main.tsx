@@ -180,6 +180,7 @@ function App() {
   }
   const track = details?.tracks.find((t) => t.id === tid);
   const hasRunning = jobs.some((j) => liveJob(j.status));
+  const subtitlesReadOnly = jobs.some(j => liveJob(j.status) && ["transcribe", "translate", "run"].includes(j.action));
   const activeTranslation = translationVersions.find((v) => v.active);
   const transcriptLabel = (v?: TranscriptVersion) =>
     v
@@ -499,7 +500,7 @@ function App() {
     return true;
   }
   function choose(c: Cue) {
-    if (draft?.id === c.id) return;
+    if (subtitlesReadOnly || draft?.id === c.id) return;
     if (!discardDraft()) return;
     originalDraft.current = structuredClone(c);
     setActive(c.id);
@@ -513,7 +514,7 @@ function App() {
     }
   }
   async function save() {
-    if (!draft) return;
+    if (subtitlesReadOnly || !draft) return;
     const original = originalDraft.current;
     if (!original) return;
     await api(
@@ -529,7 +530,7 @@ function App() {
     const listener = (e: KeyboardEvent) => {
       const modalOpen =
         !!dialog || !!deleteTarget || !!reportText || playerExpanded;
-      if (e.ctrlKey && e.key === "Enter" && draft && !modalOpen) {
+      if (e.ctrlKey && e.key === "Enter" && draft && !subtitlesReadOnly && !modalOpen) {
         e.preventDefault();
         guard(save);
       }
@@ -567,7 +568,7 @@ function App() {
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [draft, cues, dialog, deleteTarget, reportText, playerExpanded]);
+  }, [draft, cues, dialog, deleteTarget, reportText, playerExpanded, subtitlesReadOnly]);
   useEffect(() => {
     if (!draftDirty) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -940,6 +941,11 @@ function App() {
                     <section className="editor-tools">
                       <div className="tabs">
                         <b>{ui("雙語逐字稿")}</b>
+                        {subtitlesReadOnly && (
+                          <span role="status" title={ui("專案處理中，字幕暫時唯讀。所有轉錄與翻譯任務結束後即可校訂。")}>
+                            {ui("處理中 · 字幕唯讀")}
+                          </span>
+                        )}
                         <span>
                           {visible.length} / {cues.length}
                           {ui(" 句")}
@@ -1038,7 +1044,7 @@ function App() {
                       selected={selected}
                       onSelect={setSelected}
                       onPlay={play}
-                      onEdit={choose}
+                      onEdit={subtitlesReadOnly ? undefined : choose}
                       onReport={(c) => void report(c)}
                       time={time}
                       listRef={transcriptList}
@@ -1049,6 +1055,7 @@ function App() {
                             <CueEditor
                               cue={c}
                               draft={draft}
+                              readOnly={subtitlesReadOnly}
                               busy={busy}
                               changed={
                                 originalDraft.current?.revision !== c.revision

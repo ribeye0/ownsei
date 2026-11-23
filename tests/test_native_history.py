@@ -161,7 +161,7 @@ def test_changed_context_cannot_resume_or_mutate_a_completed_result(tmp_path, mo
     assert store.run_metadata(result["draft"]) == before
 
 
-def test_edit_during_generation_rejects_old_history(tmp_path, monkeypatch):
+def test_edit_during_generation_is_read_only_and_next_batch_uses_generated_history(tmp_path, monkeypatch):
     from onsei.translation_runs import TranslationSession
 
     store = project(tmp_path, monkeypatch)
@@ -169,19 +169,21 @@ def test_edit_during_generation_rejects_old_history(tmp_path, monkeypatch):
     identity = store.new_translation_run(snapshot, NATIVE_LONG)
     session = TranslationSession(store, snapshot, identity)
 
+    from onsei.storage import ConflictError
+
+    store.new_job("translate", {"track_ids": ["t"]})
+
     class EditingEngine(Engine):
         def generate(self, data):
             if self.calls:
                 assert data["document_history"]
                 cue = store.cue("c0")
-                store.edit(cue.id, {"zh_override": "最新人工譯文"}, cue.revision)
+                with pytest.raises(ConflictError, match="字幕暫時唯讀"):
+                    store.edit(cue.id, {"zh_override": "最新人工譯文"}, cue.revision)
             return super().generate(data)
 
-    with pytest.raises(ValueError, match="前文譯文已更新"):
-        translate(session, "t", NATIVE_LONG, None, lambda _: None, engine=EditingEngine())
-    result = session.cues("t")
-    assert result[0].zh == "最新人工譯文"
-    assert not result[2].zh and result[2].translation_status != "translated"
+    translate(session, "t", NATIVE_LONG, None, lambda _: None, engine=EditingEngine())
+    assert all(c.translation_status == "translated" for c in session.cues("t"))
 
 
 @pytest.mark.parametrize(
@@ -225,16 +227,10 @@ def test_human_history_punctuation_is_not_normalized_away(tmp_path, monkeypatch)
     identity = store.new_translation_run(snapshot, NATIVE_LONG)
     session = TranslationSession(store, snapshot, identity)
 
-    class EditingPunctuationEngine(Engine):
-        def generate(self, data):
-            if self.calls:
-                cue = store.cue("c0")
-                store.edit(cue.id, {"zh_override": "人工句尾。"}, cue.revision)
-            return super().generate(data)
-
-    with pytest.raises(ValueError, match="前文譯文已更新"):
-        translate(session, "t", NATIVE_LONG, None, lambda _: None, engine=EditingPunctuationEngine())
-    assert session.cues("t")[0].zh == "人工句尾。"
+    engine = Engine()
+    translate(session, "t", NATIVE_LONG, None, lambda _: None, engine=engine)
+    assert engine.calls[1]["document_history"][0]["zh"] == "人工句尾，"
+    assert session.cues("t")[0].zh == "人工句尾，"
 
 
 def test_successful_resume_clears_previous_failure_metadata(tmp_path, monkeypatch):

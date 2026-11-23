@@ -13,7 +13,7 @@ type TranscriptListProps = {
   selected: string[];
   onSelect: (ids: string[]) => void;
   onPlay: (cue: Cue) => void;
-  onEdit: (cue: Cue) => void;
+  onEdit?: (cue: Cue) => void;
   onReport: (cue: Cue) => void;
   time: (milliseconds: number) => string;
   listRef: RefObject<HTMLElement | null>;
@@ -76,13 +76,13 @@ export function TranscriptList({
                 <small>{time(c.end_ms)} ▷</small>
               </button>
             </div>
-            <div className="ja" lang="ja" onClick={() => onEdit(c)}>
+            <div className="ja" lang="ja" onClick={onEdit && (() => onEdit(c))}>
               {c.ja}
               {c.ja_override !== null && (
                 <small className="edited">{ui("已校對日文")}</small>
               )}
             </div>
-            <div className="zh" onClick={() => onEdit(c)}>
+            <div className="zh" onClick={onEdit && (() => onEdit(c))}>
               {c.zh || <span className="muted">{ui("等待翻譯")}</span>}
             </div>
             <div className="cue-status">
@@ -106,9 +106,10 @@ export function TranscriptList({
                 </span>
               )}
               <button
+                disabled={!onEdit}
                 title={ui("編輯台詞")}
                 aria-label={ui("編輯句段 #") + (c.ordinal + 1)}
-                onClick={() => onEdit(c)}
+                onClick={onEdit && (() => onEdit(c))}
               >
                 <Icon name="edit" />
               </button>

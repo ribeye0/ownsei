@@ -77,7 +77,7 @@ def test_schema_backup_is_valid_and_checkpoint_checks_source(store):
         assert json.loads(db.execute("SELECT payload FROM translation_runs").fetchone()[0])["coverage"] == []
 
 
-def test_batch_checks_snapshot_once_and_keeps_concurrent_manual_edit(store, monkeypatch):
+def test_batch_preserves_manual_override_without_rescanning_track(store, monkeypatch):
     snapshot = store.input_snapshot("t")
     result = store.new_translation_run(snapshot, "index-nativelong-9b")
     session = TranslationSession(store, snapshot, result)
@@ -85,20 +85,12 @@ def test_batch_checks_snapshot_once_and_keeps_concurrent_manual_edit(store, monk
     for cue in cues:
         cue.zh_auto, cue.translation_status = "模型", "translated"
     store.edit("c1", {"zh_override": "人工"})
-    checks = []
-    validate = store.snapshot_valid
-
-    def counted(*args, **kwargs):
-        checks.append(1)
-        return validate(*args, **kwargs)
-
-    monkeypatch.setattr(store, "snapshot_valid", counted)
+    monkeypatch.setattr(store, "snapshot_valid", lambda *a, **kw: pytest.fail("reloaded transcript"))
     assert session.save_generated_batch(cues) == {"c0", "c2"}
-    assert len(checks) == 1
     assert [cue.zh for cue in store.cues("t")] == ["模型", "人工", "模型"]
 
 
-def test_batch_history_failure_rolls_back_rows_revisions_and_session_tokens(store):
+def test_incomplete_batch_rolls_back_rows_and_revisions(store):
     snapshot = store.input_snapshot("t")
     result = store.new_translation_run(snapshot, "index-nativelong-9b")
     session = TranslationSession(store, snapshot, result)
@@ -106,13 +98,48 @@ def test_batch_history_failure_rolls_back_rows_revisions_and_session_tokens(stor
     for cue in cues:
         cue.zh_auto, cue.translation_status = "初稿", "translated"
     assert session.save_generated_batch(cues[:1]) == {"c0"}
-    before = [cue.revision for cue in store.cues("t")]
-    tokens = session.expected.copy()
-    cues[2].provenance["translation"] = {"document_history": [{"id": "1", "zh": "已改的前文"}]}
-    with pytest.raises(ValueError, match="前文譯文已更新"):
-        session.save_generated_batch(cues[1:])
-    assert session.expected == tokens
-    assert [cue.revision for cue in store.cues("t")] == before
+    before = store.cue("c1").revision
+    missing = cues[2].model_copy(update={"id": "unknown"})
+    with pytest.raises(ValueError, match="deleted"):
+        session.save_generated_batch([cues[1], missing])
+    assert store.cue("c1").revision == before
     assert store.cue("c1").zh is None
-    cues[2].provenance["translation"]["document_history"][0]["zh"] = "初稿"
     assert session.save_generated_batch(cues[1:]) == {"c1", "c2"}
+
+
+@pytest.mark.parametrize("status", ["queued", "waiting", "running", "cancelling"])
+def test_project_is_read_only_until_last_model_job_ends(store, status):
+    from onsei.storage import ConflictError
+
+    first = store.new_job("run", {})
+    second = store.new_job("transcribe", {})
+    first["status"] = "completed"
+    store.save_job(first)
+    second["status"] = status
+    store.save_job(second)
+    with pytest.raises(ConflictError, match="字幕暫時唯讀"):
+        store.edit("c0", {"start_ms": 1, "zh_override": "稍後校訂"})
+    assert store.cue("c0").start_ms == 0
+    second["status"] = "cancelled"
+    store.save_job(second)
+    store.new_job("export", {})
+    assert store.edit("c0", {"zh_override": "校訂完成"}).zh == "校訂完成"
+
+
+def test_cue_api_is_read_only_for_active_model_jobs_only(store, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    from onsei import api
+
+    idle_project = Store.create(tmp_path / "other", "Other")
+    track = store.track("t")
+    idle_project.save_track(track)
+    idle_project.replace_cues(track, "v", store.cues("t"))
+    monkeypatch.setattr(api, "project", {"busy": store, "idle": idle_project}.__getitem__)
+    client = TestClient(api.app, base_url="http://127.0.0.1")
+    body = {"changes": {"ja_override": "変更"}, "revision": store.cue("c0").revision}
+    job = store.new_job("translate", {})
+    assert client.patch("/api/projects/busy/cues/c0", json=body).status_code == 409
+    assert client.patch("/api/projects/idle/cues/c0", json=body).status_code == 200
+    job["status"] = "failed"
+    store.save_job(job)
+    assert client.patch("/api/projects/busy/cues/c0", json=body).status_code == 200

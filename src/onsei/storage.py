@@ -233,6 +233,11 @@ class Store(VersionStore):
         if set(changes) - allowed:
             raise ValueError("Unsupported cue fields")
         with self.db(write=True) as db:
+            if db.execute(
+                """SELECT 1 FROM jobs WHERE json_extract(payload,'$.action') IN ('transcribe','translate','run')
+                   AND json_extract(payload,'$.status') IN ('queued','waiting','running','cancelling') LIMIT 1"""
+            ).fetchone():
+                raise ConflictError("專案處理中，字幕暫時唯讀。所有轉錄與翻譯任務結束後即可校訂。")
             row = db.execute("SELECT payload FROM cues WHERE id=?", (cue_id,)).fetchone()
             if not row:
                 raise ValueError("Unknown cue")

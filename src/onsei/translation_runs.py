@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 
-from onsei.domain import Cue, subtitle_zh
+from onsei.domain import Cue
 from onsei.util import digest
 from onsei.preferences import translation_preferences
 from onsei.terminology import project_terms
@@ -220,12 +220,9 @@ class TranslationRuns:
 class TranslationSession:
     """Store facade: all generated writes target one run, independent of active UI selection."""
 
-    def __init__(self, store, snapshot, identity, *, include_translation=False):
+    def __init__(self, store, snapshot, identity):
         self.store, self.snapshot, self.identity = store, snapshot, identity
         self.path = store.path
-        self.expected = {}
-        self.cue_ids_by_line = {str(c["ordinal"] + 1): c["id"] for c in snapshot["cues"]}
-        self.include_translation = include_translation
 
     def settings(self):
         return self.snapshot["settings"]
@@ -255,7 +252,6 @@ class TranslationSession:
             for raw in self.snapshot["cues"]:
                 cue = Cue.model_validate(raw)
                 value = values.get(cue.id, {})
-                self.expected[cue.id] = digest(value)
                 cue.zh_auto, cue.zh_override = value.get("zh_auto"), value.get("zh_override")
                 cue.translation_status = value.get("translation_status", "pending")
                 cue.provenance.pop("translation", None)
@@ -274,63 +270,40 @@ class TranslationSession:
                 cues.append(cue)
             return cues
 
-    def _check_history(self, db, history, checked):
-        for reference in history:
-            line = reference["id"]
-            if line not in checked:
-                row = db.execute(
-                    "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
-                    (self.identity, self.cue_ids_by_line.get(line)),
-                ).fetchone()
-                value = json.loads(row[0]) if row else {}
-                text = value.get("zh_override")
-                if text is None and value.get("zh_auto") is not None:
-                    text = subtitle_zh(value["zh_auto"])
-                checked[line] = (text, value.get("translation_status"))
-            text, status = checked[line]
-            if text != reference["zh"] or status not in ("manual", "translated"):
-                raise ValueError("前文譯文已更新，停止保存舊推論；請續跑翻譯")
-
     def save_generated(self, cue, _revision):
         return cue.id in self.save_generated_batch([cue])
 
     def save_generated_batch(self, cues):
         if not cues:
             return set()
-        updated = {}
+        track_id, version = self.snapshot["track"]["id"], self.snapshot["version"]
+        saved = set()
         with self.store.db(write=True) as db:
-            if self.store.run_metadata(self.identity, db).get("status") == "stale":
+            # Project setting changes and result deletion can still invalidate a run.
+            run = db.execute(
+                "SELECT json_extract(payload, '$.status') FROM translation_runs WHERE result_id=?",
+                (self.identity,),
+            ).fetchone()
+            if not run:
+                raise ValueError("Translation result was deleted")
+            if run[0] == "stale":
                 raise ValueError("來源已更新，停止保存過期結果")
-            if not self.store.snapshot_valid(self.snapshot, db, include_translation=self.include_translation):
-                raise ValueError("來源已更新，停止保存舊推論；已完成稿保留")
-            active = self.store._active_translation(
-                db, self.snapshot["track"]["id"], self.snapshot["version"]
-            )
-            checked = {}
             for cue in cues:
-                row = db.execute(
-                    "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
-                    (self.identity, cue.id),
-                ).fetchone()
-                if not row:
+                value = json.dumps(self.store._zh_payload(cue), ensure_ascii=False)
+                if db.execute(
+                    """UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?
+                       AND json_extract(payload, '$.zh_override') IS NULL""",
+                    (value, self.identity, cue.id),
+                ).rowcount:
+                    saved.add(cue.id)
+                elif not db.execute(
+                    "SELECT 1 FROM translation_cues WHERE result_id=? AND cue_id=?", (self.identity, cue.id)
+                ).fetchone():
                     raise ValueError("Translation result was deleted")
-                if digest(json.loads(row[0])) != self.expected.get(cue.id):
-                    continue
-                if cue.translation_status == "translated":
-                    history = (cue.provenance.get("translation") or {}).get("document_history", [])
-                    self._check_history(db, history, checked)
-                value = self.store._zh_payload(cue)
-                db.execute(
-                    "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
-                    (json.dumps(value, ensure_ascii=False), self.identity, cue.id),
+            if self.store._active_translation(db, track_id, version) == self.identity:
+                db.executemany(
+                    """UPDATE cues SET payload=json_set(payload, '$.revision',
+                           COALESCE(json_extract(payload, '$.revision'), 0) + 1) WHERE id=?""",
+                    ((cue_id,) for cue_id in saved),
                 )
-                checked.pop(str(cue.ordinal + 1), None)
-                updated[cue.id] = digest(value)
-                if active == self.identity:
-                    raw = db.execute("SELECT payload FROM cues WHERE id=?", (cue.id,)).fetchone()
-                    base = Cue.model_validate_json(raw[0])
-                    base.revision += 1
-                    db.execute("UPDATE cues SET payload=? WHERE id=?", (base.model_dump_json(), cue.id))
-        # Publish optimistic-write tokens only after every write commits.
-        self.expected.update(updated)
-        return set(updated)
+        return saved
