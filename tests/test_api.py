@@ -76,6 +76,14 @@ def test_all_asr_models_accepted_and_non_asr_rejected(tmp_path, monkeypatch):
         assert client.post(f"/api/projects/{p}/jobs", json={"asr": model}).status_code == 422
 
 
+def test_audio_openapi_distinguishes_playback_and_headers(monkeypatch):
+    # Regenerate the schema even when a previous test requested it.
+    monkeypatch.setattr(service.app, "openapi_schema", None)
+    client = TestClient(service.app, base_url="http://127.0.0.1")
+    audio = client.get("/openapi.json").json()["paths"]["/api/projects/{p}/tracks/{t}/audio"]
+    assert audio["get"]["operationId"] != audio["head"]["operationId"]
+
+
 def test_audio_byte_ranges_head_and_missing_source(tmp_path, monkeypatch):
     from onsei.audio import import_audio
     import wave

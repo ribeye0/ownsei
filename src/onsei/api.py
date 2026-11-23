@@ -685,7 +685,8 @@ def download_job_log(p: str, j: str):
     )
 
 
-@app.api_route("/api/projects/{p}/tracks/{t}/audio", methods=["GET", "HEAD"])
+@app.get("/api/projects/{p}/tracks/{t}/audio")
+@app.head("/api/projects/{p}/tracks/{t}/audio")
 def playback(p: str, t: str):
     s = project(p)
     track = s.track(t)
