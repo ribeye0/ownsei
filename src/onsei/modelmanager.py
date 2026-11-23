@@ -133,6 +133,8 @@ def start_download(names):
     if not names or len(names) > len(models.REGISTRY) or any((n not in models.REGISTRY for n in names)):
         raise ValueError("請選擇已登錄的模型")
     requested = list(dict.fromkeys([d for n in names for d in [*models.dependencies(n), n]]))
+    # Check the combined selection before creating any jobs or child processes.
+    models.check_prepare_space(requested)
     STATE.mkdir(parents=True, exist_ok=True)
     states = []
     with FileLock(STATE / "model-submit.lock"):
@@ -318,7 +320,7 @@ def worker(name, identity):
         state.update(status="completed", stage="completed", message="模型準備完成")
     except Exception as error:
         traceback.print_exc()
-        state.update(status="failed", error=str(error), message="模型準備失敗")
+        state.update(status="failed", error=models.preparation_error(error), message="模型準備失敗")
     finally:
         with guard, FileLock(STATE / "model-submit.lock"):
             current = json.loads(path.read_text())

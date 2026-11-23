@@ -35,8 +35,12 @@ class ModelDownloads(BaseModel):
 @router.post("/api/models/download")
 def model_download(body: ModelDownloads):
     from onsei.modelmanager import start_download
+    from onsei.diskspace import InsufficientSpace
 
-    return start_download(body.models)
+    try:
+        return start_download(body.models)
+    except InsufficientSpace as error:
+        raise HTTPException(507, str(error)) from error
 
 
 @router.get("/api/models/{name}/log")

@@ -11,6 +11,7 @@ from huggingface_hub import snapshot_download
 from onsei.util import ROOT, STATE, atomic_json, file_hash, gpu_lock_path
 from onsei.local_models import LOCAL_GGUFS
 from onsei.local_models import LOCAL_MODELS as LOCAL_MODELS
+from onsei.diskspace import GIB, RESERVE, capacity_message, existing_directory, require_space
 
 from onsei.catalog import (
     REGISTRY as REGISTRY,
@@ -70,6 +71,66 @@ def runtime_python(kind: str) -> Path:
     return p
 
 
+def runtime_current(kind):
+    env = STATE / kind
+    try:
+        return (
+            venv_python(env).exists()
+            and not (env / "onsei-runtime-installing.json").exists()
+            and json.loads((env / "onsei-runtime.json").read_text())
+            == {"lock_sha256": file_hash(runtime_lock(kind)), "python": "3.12"}
+        )
+    except (OSError, ValueError):
+        return False
+
+
+def runtime_space_requirements(kind):
+    if runtime_current(kind):
+        return []
+    # Include unpacked packages, wheels and build scratch space, not just weights.
+    installed = {"vad": 2, "whisper": 2, "whisper-cuda": 5, "whisper-convert": 5}.get(kind, 2) * GIB
+    if sys.platform == "win32":
+        cache = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "uv/cache"
+    else:
+        cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "uv"
+    cache = Path(os.environ.get("UV_CACHE_DIR", cache))
+    return [(STATE / kind, installed), (cache, GIB)]
+
+
+def check_prepare_space(names):
+    requirements = []
+    kinds = set()
+    for name in dict.fromkeys(names):
+        if not check_manifest(name, verify=False):
+            requirements.append((model_dir(name), int(MODEL_INFO[name][4] * 10**9 * 1.15)))
+        kind = REGISTRY[name][2]
+        if kind and kind != "speech":
+            kinds.add(kind)
+    for kind in kinds:
+        requirements.extend(runtime_space_requirements(kind))
+    require_space(requirements)
+
+
+def preparation_error(error):
+    """Keep technical details in the log, but explain out-of-space failures in UI."""
+    text = str(error)
+    no_space = isinstance(error, OSError) and error.errno == errno.ENOSPC
+    no_space |= any(term in text.lower() for term in ("no space left", "os error 28", "enospc"))
+    try:
+        if no_space:
+            return capacity_message(ROOT)
+        if isinstance(error, subprocess.CalledProcessError) or "writer channel closed" in text.lower():
+            paths = [ROOT, *[p for p, _ in runtime_space_requirements("vad")]]
+            for path in paths:
+                if shutil.disk_usage(existing_directory(path)).free < RESERVE:
+                    return capacity_message(path)
+    except OSError:
+        # Failure reporting must still work if the filesystem itself is inaccessible.
+        if no_space:
+            return "磁碟空間不足，請清理模型與套件快取所在磁碟的空間後重試。詳細錯誤見任務紀錄。"
+    return text
+
+
 def setup_runtime(kind: str, progress=None) -> None:
     uv = ROOT / ".tools" / ("uv.exe" if sys.platform == "win32" else "uv")
     if not uv.exists():
@@ -81,20 +142,16 @@ def setup_runtime(kind: str, progress=None) -> None:
     marker = env / "onsei-runtime.json"
     installing = env / "onsei-runtime-installing.json"
     signature = {"lock_sha256": file_hash(lock), "python": "3.12"}
-    try:
-        if (
-            venv_python(env).exists()
-            and (not installing.exists())
-            and (json.loads(marker.read_text()) == signature)
-        ):
-            return
-    except (OSError, ValueError):
-        pass
+    if runtime_current(kind):
+        return
     if env.is_symlink():
         raise ValueError("共用執行環境版本不同；請先移除新版環境連結，再重新準備模型")
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "runtime_wait", message=f"準備 {kind} 執行環境；等待目前的 GPU 任務完成")
     with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(STATE)):
+        if runtime_current(kind):
+            return
+        require_space(runtime_space_requirements(kind))
         notify(progress, "runtime", message=f"安裝 {kind} 執行環境（套件進度見詳細紀錄）")
         if not venv_python(env).exists():
             subprocess.run([str(uv), "venv", "--python", sys.executable, str(env)], check=True)
@@ -216,6 +273,7 @@ def prepare(name: str, progress=None) -> Path:
     STATE.mkdir(parents=True, exist_ok=True)
     notify(progress, "waiting", message="等待其他模型準備任務完成")
     with FileLock(STATE / "model-operation.lock"):
+        check_prepare_space([name])
         return _prepare(name, progress)
 
 
