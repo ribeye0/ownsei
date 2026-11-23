@@ -345,11 +345,13 @@ def _prepare(name, progress):
         if check_manifest(name, progress):
             return p
         download_snapshot(repo, revision, p, ["VAD/model.pth.tar", "VAD/cmvn.ark"], progress)
-        for filename, expected in HASHES.items():
+        notify(progress, "verify", message="校驗模型檔案", files_done=0, files_total=len(HASHES))
+        for index, (filename, expected) in enumerate(HASHES.items(), 1):
             source = p / "VAD" / filename
             if file_hash(source) != expected:
                 raise ValueError("FireRedVAD SHA256 mismatch")
             source.replace(p / filename)
+            notify(progress, "verify", message=f"校驗 {filename}", files_done=index, files_total=len(HASHES))
         atomic_json(p / "onsei-model.json", {"repo": repo, "revision": revision, "sha256": HASHES})
         return p
     if name in SPEECH_FILES:

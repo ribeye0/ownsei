@@ -1,6 +1,7 @@
 import {useEffect, useState} from "react";
 import {api} from "./api";
 import {Modal} from "./Modal";
+import {modelDownload} from "./modelDownload";
 import {t as ui} from "./i18n";
 type Job = {status:string; stage:string; message:string; error:string|null; bytes_done:number; bytes_total:number; transfer_bytes_done?:number; files_done:number; files_total:number};
 export type ManagedModel = {id:string; name:string; role:string; parameters:string; format:string; basic:boolean; repo:string; revision:string; url:string; license_url:string; download_bytes_estimate:number; vram_estimate:string; installed:boolean; runtime_ready:boolean; ready:boolean; dependencies:string[]; bytes:number; source_bytes:number; job:Job|null};
@@ -10,6 +11,18 @@ function size(value:number) {const units=["B","KiB","MiB","GiB"];const index=val
 function status(model:ManagedModel) {
     if (active(model.job)) return model.job!.status === "queued" ? ui("等待中") : ui("準備中");
     return model.ready ? ui("可用") : model.installed ? ui("已下載；需要檢查／修復") : model.bytes || model.source_bytes ? ui("部分檔案；可續傳") : ui("未下載");
+}
+function DownloadProgress({job, estimate}:{job:Job; estimate:number}) {
+    const {network, received, percent} = modelDownload(job, estimate);
+    const label = network ? ui("本次下載") : ui("檔案寫入");
+    return <>
+      <div className="model-download-summary"><strong>{label}</strong>
+        <span>{percent === undefined ? ui("總量未定") : (network ? ui("約 ") : "") + (Math.floor(percent * 10) / 10).toFixed(1) + "%"}</span>
+      </div>
+      <progress aria-label={label} max={100} value={percent}/>
+      <div>{network ? ui("網路已接收：") : ui("檔案寫入：")}{size(received)}</div>
+      {network && job.bytes_total > 0 && <small>{ui("檔案寫入：")}{size(job.bytes_done)} / {size(job.bytes_total)}</small>}
+    </>;
 }
 export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=>void}) {
     const [models,setModels]=useState<ManagedModel[]>([]),[selected,setSelected]=useState<string[]>([]);
@@ -70,11 +83,10 @@ export function ModelManager({onClose,onChanged}:{onClose:()=>void;onChanged:()=
         <p className="code">{model.url?<a href={model.url} target="_blank" rel="noreferrer">{model.repo}</a>:model.repo} · {model.revision.slice(0,12)}{model.license_url&&<> · <a href={model.license_url} target="_blank" rel="noreferrer">{ui("模型說明與授權")}</a></>}</p>
         {model.job&&<div className="model-progress"><p>{ui(model.job.message)} {model.job.error&&<span className="error">{model.job.error}</span>}</p>
           {active(model.job)&&<>
-            {model.job.stage==="download"?<>
-              <progress aria-label={ui("模型檔案準備進度")} max={model.job.bytes_total||undefined} value={model.job.bytes_total>0&&model.job.bytes_done>0?Math.min(model.job.bytes_done,model.job.bytes_total):undefined}/>
-              {model.job.bytes_total>0&&<span>{ui("檔案寫入：")}{size(model.job.bytes_done)} / {size(model.job.bytes_total)}{ui("（目前已知檔案總量）")}</span>}
-              {model.job.transfer_bytes_done!==undefined&&<small>{ui("網路已接收：")}{size(model.job.transfer_bytes_done)}{ui("（快取與壓縮會影響實際接收量）")}</small>}
-            </>:<progress/>}
+            {model.job.stage==="download"
+              ? <DownloadProgress job={model.job} estimate={model.download_bytes_estimate}/>
+              : <progress aria-label={ui(model.job.message)} max={model.job.files_total || 1}
+                  value={model.job.stage==="verify" && model.job.files_total>0 ? model.job.files_done : undefined}/>}
             {model.job.files_total>0&&<small>{model.job.stage==="verify"?ui("校驗進度："):ui("已完成檔案：")}{model.job.files_done}/{model.job.files_total}</small>}
           </>}
         </div>}

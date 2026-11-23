@@ -2151,6 +2151,28 @@ progress::-moz-progress-bar {
   padding: 8px;
   background: var(--panel);
 }
+.model-card progress:indeterminate {
+  background: linear-gradient(90deg, transparent, var(--accent), transparent)
+    0 0 / 35% 100% no-repeat var(--surface-alt);
+  animation: model-transfer 1.6s ease-in-out infinite alternate;
+}
+.model-card progress:indeterminate::-webkit-progress-bar {
+  background: transparent;
+}
+.model-card progress:indeterminate::-moz-progress-bar {
+  background: transparent;
+}
+@keyframes model-transfer {
+  to { background-position: 100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-card progress:indeterminate { animation: none; background-position: center; }
+}
+.model-download-summary {
+  display: flex;
+  justify-content: space-between;
+  font-variant-numeric: tabular-nums;
+}
 .model-log {
   max-height: 260px;
   overflow: auto;
