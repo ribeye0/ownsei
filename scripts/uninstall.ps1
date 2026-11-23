@@ -10,7 +10,7 @@ if (!(Test-Path -LiteralPath $python)) {
         $python = & $uv python find --managed-python --no-python-downloads 3.12
     }
     if (!$python -or !(Test-Path -LiteralPath $python)) {
-        $python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+        $python = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     }
 }
 $temp = [IO.Path]::GetTempFileName()

@@ -166,6 +166,10 @@ class Plan:
             self.tree(directory / ".cache" / "huggingface")
             self.empty(directory / ".cache")
             self.empty(directory)
+        for name in REGISTRY:
+            self.tree(path / ".sources" / name)
+        self.empty(path / ".sources")
+        self.tree(path / ".cache" / "hub")
         self.tree(path / ".cache" / "xet")
         self.empty(path / ".cache")
 
@@ -185,6 +189,8 @@ def make_plan(root, extra):
     if not {"release.json", "src/onsei/cli.py", "pyproject.toml"} <= files.keys():
         raise ValueError("無法辨識 Ownsei 發布清單。")
     plan = Plan(root)
+    if not plan.allowed(manifest):
+        raise ValueError("安裝路徑位於受保護的專案或連結下，無法安全移除。")
     for name in [*files, "manifest.json"]:
         relative = safe_relative(name)
         path = root / relative
