@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import time
+import wave
 
 from fastapi.testclient import TestClient
 
@@ -103,3 +105,32 @@ def test_title_validation_and_existing_registry_migration(tmp_path, monkeypatch)
     assert client.delete("/api/projects/old").status_code == 200
     assert client.post("/api/projects/old/restore").status_code == 200
     assert client.delete("/api/projects/unknown").status_code == 404
+
+
+def test_completed_background_import_does_not_block_permanent_deletion(tmp_path, monkeypatch):
+    root = tmp_path / "app"
+    monkeypatch.setattr(service, "ROOT", root)
+    monkeypatch.setattr(service, "REGISTRY", root / "workspace/index.db")
+    source = tmp_path / "原音.wav"
+    with wave.open(str(source), "wb") as wav:
+        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+        wav.writeframes(b"\0\0" * 16000)
+    original = source.read_bytes()
+    client = TestClient(service.app, base_url="http://127.0.0.1")
+    identity = client.post("/api/projects", json={"title": "匯入後刪除"}).json()["id"]
+    base = f"/api/projects/{identity}"
+    result = client.post(base + "/imports", json={"path": str(source)})
+    assert result.status_code == 200
+    deadline = time.monotonic() + 10
+    while True:
+        state = client.get(base + "/imports/" + result.json()["id"]).json()
+        if state["status"] != "running" or time.monotonic() > deadline:
+            break
+        time.sleep(0.01)
+    assert state["status"] == "completed", state
+    assert client.delete(base).status_code == 200
+    response = client.delete(base + "/purge")
+    assert response.status_code == 200, response.text
+    assert response.json()["scope"] == "workspace"
+    assert not (root / "workspace" / identity).exists()
+    assert source.read_bytes() == original

@@ -43,6 +43,7 @@ def removal_scope(store, identity, workspace):
             "logs",
             "trash",
             "import-checksums.json",
+            "imports",
         }
         unknown = [
             p.name

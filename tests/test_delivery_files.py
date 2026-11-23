@@ -17,7 +17,7 @@ from onsei.storage import Store
 def store(tmp_path):
     store = Store.create(tmp_path / "workspace", "Download test")
     # Decomposed dakuten is intentionally preserved byte-for-byte.
-    source = tmp_path / "audio" / " 02：ストリップ ～テスト!? [a] #%.wav"
+    source = tmp_path / "audio" / " 02：ストリップ ～テスト!？ [a] #%.wav"
     source.parent.mkdir()
     source.write_bytes(b"original audio")
     track = Track(

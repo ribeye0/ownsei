@@ -65,6 +65,8 @@ bash scripts/check.sh
 
 `check.sh` 執行靜態檢查、後端與前端測試、前端建置、原始碼檔案檢查；GitHub Actions 使用相同入口。前端開發伺服器以 `npm run dev` 啟動，API proxy 指向 8878。
 
+Windows 開發環境在 `uv sync --locked --python 3.12` 與 `npm ci --prefix frontend` 後執行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`；另需 FFmpeg／ffprobe。結果與 JUnit 紀錄保存在 `artifacts/validation/`。已安裝的發布包可用其 `.venv` Python 執行 `scripts/smoke_release.py --release-root PATH --output NEW_DIRECTORY`，透過獨立資料目錄檢查 HTTP、匯入、校訂與匯出；原生視窗及 GPU 推理另行實機驗收。
+
 原始碼包包含程式、測試、鎖檔、部署腳本、UI 素材與逐檔校驗清單；模型與使用資料獨立保存。
 
 MIT。第三方來源見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
