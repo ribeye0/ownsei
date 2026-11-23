@@ -7,7 +7,29 @@ from onsei.terminology import normalize_entries, project_terms
 
 TARGETS = {"zh-Hant": "繁體中文", "zh-Hans": "简体中文"}
 DEFAULT_STYLES = {"zh-Hant": STYLE_INSTRUCTION, "zh-Hans": SIMPLIFIED_STYLE_INSTRUCTION}
-PREVIOUS_TRADITIONAL_STYLE = STYLE_INSTRUCTION.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1)
+# Settings previously saved factory text verbatim. Upgrade exact matches only.
+_OLD_HANT = (
+    "將日語角色台詞譯成適合二次元音聲字幕的繁體中文，像角色正在對眼前的人說話，自然、順口、簡潔。"
+    "依原文保留人物的禮貌、親疏與情緒變化；自稱、稱呼和語尾隨人物、對象及場景自然承接。"
+    "口吃、拉長音、停頓與重複用自然中文保留表演節奏，不必逐字複製日語語序。省略主語可以維持省略。"
+    "用詞保留原文的直白或委婉程度；使用者術語及備註優先，機器背景僅供參考。"
+    "不增刪意思或人物關係，不把直接對話改成第三人稱旁白，不擅加可愛口吻、流行梗或裝飾符號。"
+    "只翻譯目標句段，背景只供理解，每個ID恰好對應一項譯文，text只放台詞。"
+    "字幕句尾不加句號或逗號，保留問號、驚嘆號與必要省略號。"
+)
+_OLD_HANS = (
+    "将日语角色台词译成适合二次元音声字幕的简体中文，像角色正在对眼前的人说话，自然、顺口、简洁。"
+    "保留人物的礼貌、亲疏与情绪变化；自称、称呼和语尾随人物、对象及场景自然承接。"
+    "用自然中文保留口吃、拉长音、停顿与重复的表演节奏，不照搬日语语序；省略的主语可以继续省略。"
+    "用词保留原文的直白或委婉程度，作品术语和备注优先，不刻意加入书面腔、地域网络梗或可爱口吻。"
+    "不增删意思或人物关系，不把直接对话改成第三人称旁白。"
+    "只翻译目标句段，背景仅供理解，每个ID对应一项译文，text只放台词。"
+    "字幕句尾不加句号或逗号，保留问号、感叹号与必要省略号。"
+)
+_OLD_TRADITIONAL_STYLES = (
+    _OLD_HANT,
+    _OLD_HANT.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1),
+)
 MAX_STYLE_LENGTH = 2000
 NAME_SUFFIXES = ("ちゃん", "くん", "君", "さん", "さま", "様", "先輩", "センパイ", "せんぱい", "殿")
 
@@ -23,12 +45,10 @@ def style_variants(settings):
     custom = settings.get("translation_styles", {})
     if not isinstance(custom, dict) or set(custom) - set(TARGETS):
         raise ValueError("翻譯風格只接受繁體與簡體版本")
-    variants.update(
-        {
-            target: DEFAULT_STYLES[target] if style == PREVIOUS_TRADITIONAL_STYLE else validate_style(style)
-            for target, style in custom.items()
-        }
-    )
+    for target, style in custom.items():
+        old_styles = _OLD_TRADITIONAL_STYLES if target == "zh-Hant" else (_OLD_HANS,)
+        if style not in old_styles:
+            variants[target] = validate_style(style)
     legacy = settings.get("translation_style")
     target = settings.get("target_language") or "zh-Hant"
     if not isinstance(target, str) or target not in TARGETS:
@@ -36,11 +56,11 @@ def style_variants(settings):
     if legacy is not None and target not in custom:
         # Old factory prompts become the dedicated factory prompt; custom prose
         # stays attached to its original target without being rewritten.
-        variants[target] = (
-            DEFAULT_STYLES[target]
-            if legacy in (STYLE_INSTRUCTION, PREVIOUS_TRADITIONAL_STYLE)
-            else validate_style(legacy)
-        )
+        old_styles = (*_OLD_TRADITIONAL_STYLES, STYLE_INSTRUCTION)
+        if target == "zh-Hans":
+            old_styles += (_OLD_HANS,)
+        if legacy not in old_styles:
+            variants[target] = validate_style(legacy)
     return variants
 
 

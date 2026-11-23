@@ -10,6 +10,8 @@ from onsei.domain import Cue, Track
 from onsei.global_preferences import load_global, save_global
 from onsei.preferences import (
     DEFAULT_STYLES,
+    _OLD_HANS,
+    _OLD_TRADITIONAL_STYLES,
     effective_glossary,
     pin_translation_settings,
     style_variants,
@@ -164,18 +166,21 @@ def test_target_switch_uses_separate_prompts_and_preserves_legacy_custom_style()
     )
 
 
-def test_previous_factory_style_updates_editable_settings_but_not_pinned_jobs():
-    current = DEFAULT_STYLES["zh-Hant"]
-    previous = current.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1)
+@pytest.mark.parametrize(
+    ("target", "previous"),
+    [("zh-Hant", style) for style in _OLD_TRADITIONAL_STYLES] + [("zh-Hans", _OLD_HANS)],
+)
+def test_previous_factory_style_updates_editable_settings_but_not_pinned_jobs(target, previous):
+    current = DEFAULT_STYLES[target]
     assert previous != current
     for saved in [
-        {"translation_style": previous},
-        {"translation_styles": {"zh-Hant": previous}},
+        {"target_language": target, "translation_style": previous},
+        {"target_language": target, "translation_styles": {target: previous}},
     ]:
         assert updated_preferences(saved, {})["translation_style"] == current
     custom = previous + "保留我的額外風格設定"
-    assert style_variants({"translation_styles": {"zh-Hant": custom}})["zh-Hant"] == custom
-    snapshot = {"target_language": "zh-Hant", "translation_style": previous, "global_glossary": []}
+    assert style_variants({"translation_styles": {target: custom}})[target] == custom
+    snapshot = {"target_language": target, "translation_style": previous, "global_glossary": []}
     assert translation_preferences(snapshot)["translation_style"] == previous
 
 
