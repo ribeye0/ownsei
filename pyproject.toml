@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ownsei"
-version = "0.2.3"
+version = "0.2.4"
 description = "Local Japanese audio transcription and Chinese subtitle translation"
 readme = "README.md"
 license = "MIT"
