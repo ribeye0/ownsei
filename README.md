@@ -1,85 +1,77 @@
-# Ownsei
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/ownsei-logo-dark.png">
+    <img src="frontend/public/ownsei-logo.png" alt="Ownsei" width="96">
+  </picture>
+</p>
 
-本機日語音聲轉錄、中文翻譯與字幕校訂工具。Python API + React 介面；Haas 使用 speech.cpp，翻譯及人物整理使用 llama.cpp。預設 Haas JA F16 → Index NativeLong 9B。
+# Ownsei — 日語音聲字幕工具
 
-## 執行
+Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 Index-NativeLong 參照前後文翻譯成中文，在指定譯文風格的同時保持長文用詞的一致性，改善前後人名或稱呼被翻譯成不同詞彙的問題。
+轉錄與翻譯皆在本地執行，並透過 Vulkan 加速，支援 NVIDIA 、AMD 和 Intel 各家的顯卡（VRAM 需 8GB 以上）。
 
-目前實機驗收環境：Linux x86-64、Python 3.12、glibc ≥ 2.38。系統需 FFmpeg、Node.js／npm、Vulkan loader 與 GPU 驅動。檔案選擇器使用 KDialog／Zenity，也可直接填入路徑。
+**[下載 Linux／Windows 版](https://github.com/ribeye0/ownsei/releases)**
 
-```sh
-bash scripts/install.sh
-.venv/bin/ownsei models prepare --model haas-ja-v1.0-f16
-.venv/bin/ownsei models prepare --model firered-vad
-.venv/bin/ownsei models prepare --model index-nativelong-9b
-bash scripts/start.sh
-```
+## 從一段對話做出可以回聽的字幕
 
-介面：<http://127.0.0.1:8878/>。可在模型管理中下載基本組合。程式監聽 loopback；`workspace/` 保存專案、版本與任務，`models/` 保存權重。匯入以本機音檔路徑引用，字幕預設保留原音檔名稱。
+音聲作品裡，角色常省略主詞，也會在對話中交替使用名字、暱稱和敬稱。單看一句「黙っちゃった」，很難決定該譯成「怎麼不說話了？」還是「他沉默了」。這個選擇取決於前一句在問誰，以及眼前的人有沒有回答。Ownsei 把**帶時間戳的日文逐字稿**保留下來：翻譯模型能讀到來回對話，聽眾也能從一句中文跳回原音，自己判斷角色的語氣。
 
-```sh
-.venv/bin/ownsei doctor --strict
-.venv/bin/ownsei models list
-.venv/bin/ownsei init workspace/demo --title demo
-.venv/bin/ownsei import workspace/demo /path/to/audio
-.venv/bin/ownsei run workspace/demo --context 32768
-```
+![Ownsei 架構圖。上半部由 speech.cpp 執行 Haas JA F16 轉錄日文，下半部由 llama.cpp 執行 Index-Nailong-9B 翻譯中文。](docs/architecture.svg)
 
-Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自原生 token。翻譯可選 NativeLong、Index Translate、[SFT48 Q4_K_M](https://huggingface.co/yzk9/index-translate-asmr-9B)，上下文 8K–256K；人物譯名、全局／專案術語與風格指引均可配置。模型由模型管理介面下載。
+**圖 1　轉錄與翻譯流程。** 實線沿著音軌、日文逐字稿、中文譯文到字幕匯出。紫色虛線是翻譯模型可以參照的資料，其中右側回路將前批譯文帶回下一批，讓先前採用的稱呼能沿用到後面的對話。[English diagram](docs/architecture.en.svg)
 
-支援單軌／批量處理、取消與恢復任務、雙語回聽及校訂、繁／簡字幕、VTT／SRT／LRC／ASS／JSONL 匯出、ZIP 與寫回音檔目錄。各次轉錄及翻譯獨立保存，人工校訂使用版本檢查避免覆寫。
+## 方法與模型
 
-## 結構
+| 階段 | 預設做法 | 可以調整的地方 |
+| --- | --- | --- |
+| 語音切分 | FireRedVAD 在 CPU 上找出有人聲的區段，再送入轉錄模型。 | 耳語被切得太碎時可降低門檻，也可換成 Silero VAD 或使用固定時間窗。 |
+| 日文轉錄 | speech.cpp 執行 Haas JA F16，使用模型輸出的時間戳組成逐字稿。 | 顯存較少時可選 Q8_0。辨識有誤時可先回聽、修正日文，再重譯該段。 |
+| 中文翻譯 | llama.cpp 執行 Index-NativeLong 9B，分批讀入待譯句、前後日文與前批中文。預設上下文容量為 64K。 | 可選繁體或簡體，調整上下文容量（8K–256K）及譯文風格。常用詞可在全局共用，角色名與暱稱可在專案內指定。 |
 
-| 範圍 | 入口與責任 |
-|---|---|
-| 模型 | `catalog.py` 固定來源、版本、校驗與顯示資訊；`models.py` 準備權重與 runtime；`modelmanager.py` 管理下載任務 |
-| 轉錄 | `asr.py` 組織轉錄；`segmentation.py` 切分語音；`speech_worker.py` 隔離推理 |
-| 翻譯 | `translation_pipeline.py` 管理一次任務；`translation.py` 分批與重試；`inference.py` 管理 llama.cpp；`translation_adapters.py` 組裝 prompt 與解析 |
-| 資料 | `storage.py`／`versions.py`／`translation_runs.py` 保存專案與結果；`snapshots.py` 驗證來源版本 |
-| 引擎 | `backend.py` 負責執行檔、函式庫環境與裝置選擇，與字幕處理邏輯分離 |
-| 介面 | `api.py` 為專案操作入口，`api_system.py` 為環境與模型 API；`frontend/src/` 保存工作區與共用元件 |
+**同一份逐字稿可以試不同譯風。** 除了 NativeLong，也可選 Index-Translate 9B，或以日語音聲台詞與人工中文字幕微調的 Ownsei SFT48。SFT48 著重於成人向音聲的用詞與字幕標點。這兩個模型預設搭配 Qwen3.5 4B 整理人物譯名，使用者指定的術語優先。每次翻譯獨立保存，可以切換版本，比較同一句話的不同譯法。
 
-speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。預設發布 Linux／Windows x64 Vulkan 包。Windows 11 已完成安裝、HTTP、原生檔案選擇器、Edge 操作與 AMD Vulkan 推理實測。
+## 端到端實測
 
-CLI 環境設定：`ONSEI_ROOT` 指定資料根目錄；`ONSEI_ASR_DEVICE`、`ONSEI_LLM_DEVICE` 指定 `auto`／`CPU`／對應 GPU ID；`ONSEI_VAD_ENGINE` 指定 `firered`／`silero`／`none`。可用 `ONSEI_SPEECH_BINARY`、`ONSEI_LLM_BINARY` 明確指定引擎。GUI 任務會保存自己的設定。
+在 Linux Vulkan 發布包 **0.2.1** 上，以 **Radeon RX 9070 XT** 處理一段 22 秒的日語對話。這次使用固定時間窗、Haas JA F16 與 NativeLong 9B Q4_K_M，上下文設為 8K，關閉人物譯名記憶。
 
-## 發布包
+| 日文轉錄 | 中文翻譯 | 整個任務（含匯出） | 輸出 |
+| ---: | ---: | ---: | --- |
+| 0.74 秒 | 4.66 秒 | **5.57 秒** | 7 句有時間戳的日中雙語字幕 |
 
-Release 包含建置好的網頁及 speech.cpp／llama.cpp；首次安裝下載 Python 3.12 與依賴，不需 Node.js。Linux 執行 `bash ownsei.sh`；Windows 執行 `Ownsei.cmd`，`Install.cmd` 可單獨安裝環境。Windows 缺少 FFmpeg 時由安裝腳本下載固定的 LGPL 版本。
+耗時取自這次任務的起訖紀錄，從已匯入的音軌開始計時。整部作品的翻譯速度還會受前文長度、批次數量及顯存影響。
 
-選配建置的 CUDA 包使用 CUDA 13.4，需相容的 NVIDIA 驅動；Haas 仍使用 Vulkan。Vulkan 包適用 NVIDIA／AMD／Intel。模型由介面另行下載。二進位與授權清單見 `release.json`、`manifest.json`、`third_party/`。
+### 與 ChickenRice 的字幕比較（待測）
 
-發布包依 Linux／Windows 分開提供；各包含對應平台的引擎與啟動檔。啟動器在 8878 被占用時會自動選用其他連接埠並開啟瀏覽器；可用 `--port NUMBER` 指定連接埠。後端視窗顯示服務網址、警告與 HTTP 錯誤。需要查看每次請求時，執行 `bash ownsei.sh --verbose` 或 `Ownsei.cmd --verbose`。
+同一段日語對話，直接從語音譯成中文，和先保留日文原稿、再參照上下文翻譯，在什麼情況下會有差別？對照組採用 ChickenRice 官方翻譯版，其 Faster Whisper 模型直接輸出中文。該專案另有日文轉錄版。[ChickenRice 模型與版本說明](https://github.com/TransWithAI/Faster-Whisper-TransWithAI-ChickenRice/blob/62104884d8553be1c30bc88c157d82b2b8d0792b/README.md)
 
-基本模型權重約 6.9 GB，另需 VAD Python 執行環境與下載／安裝暫存；首次準備建議保留 12–15 GiB。準備前會按所在磁碟檢查預估容量，失敗後可重試續傳。
+兩套工具各自以預設流程處理同一條完整音軌，保留原始輸出。先選定評閱時段，再隱去工具名稱，按相同時間範圍回聽兩份字幕。重點看三件事：有沒有譯對「誰在對誰說話」、同一角色的名字和稱呼能否前後對應，以及耳語或短句是否漏譯、重複或憑空多出。兩邊都通順且忠於原意時可判平手。若作品附人工字幕，留到評閱時才拿來參照。
 
-升級時先關閉舊版，將整個 `workspace/` 與 `models/` 複製到解壓後的新版目錄，再使用新版啟動器安裝環境。匯入的音檔與外部專案沿用原本的檔案路徑。舊 Whisper 逐字稿仍可開啟、校訂、翻譯及匯出。
+## 從整部作品找到一句台詞
 
-## 開發與打包
+匯入作品目錄後，可先挑一軌試譯，再勾選其餘音軌批量處理。同一音軌若同時有 WAV 與 MP3，預設只匯入 WAV。逐字稿並列顯示日文和中文，只記得譯文中的幾個字，也能搜尋後跳回那段原音。
 
-```sh
-bash scripts/setup.sh
-(cd frontend && npm ci)
-bash scripts/check.sh
-.venv/bin/python scripts/package_release.py --cache downloads --output artifacts/release/v0.2.1
-```
+匯出可選日文、中文或雙語，支援 VTT、SRT、LRC、ASS 與 JSONL。例如為 `01 プロローグ.wav` 匯出中文 VTT，預設檔名就是 `01 プロローグ.vtt`。字幕可直接存到音檔旁，或集中放在 `sub/`。
 
-發布指令從乾淨的 Git 提交換出原始碼，重新建置一次前端，再產生原始碼包及兩平台 Vulkan 包。各包記錄同一個提交，`SHA256SUMS` 可核對下載檔。
+## 安裝
 
-`check.sh` 執行靜態檢查、後端與前端測試、前端建置、原始碼檔案檢查；GitHub Actions 使用相同入口。前端開發伺服器以 `npm run dev` 啟動，API proxy 指向 8878。
+| 平台 | 發布檔 | 解壓後啟動 |
+| --- | --- | --- |
+| Windows 10／11 x64 | `ownsei-版本號-windows-x64-vulkan.zip` | 雙擊 `Ownsei.cmd` |
+| Linux x86-64（glibc 2.38 以上） | `ownsei-版本號-linux-x64-vulkan.tar.gz` | 執行 `bash ownsei.sh` |
 
-Windows 開發環境在 `uv sync --locked --python 3.12` 與 `npm ci --prefix frontend` 後執行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1`；另需 FFmpeg／ffprobe。結果與 JUnit 紀錄保存在 `artifacts/validation/`。
+首次啟動會安裝 Python 環境並開啟瀏覽器。在「模型管理與環境檢查」按 **準備基本組合**，即可下載 FireRedVAD、Haas JA F16 與 NativeLong 9B。首次安裝與下載建議預留 12–15 GiB。Linux 另需 curl、FFmpeg 與 ffprobe。
 
-測試已安裝的發布包時，請在**原始碼目錄**執行下列命令。測試腳本隨原始碼提供，以發布包的 Python 在獨立目錄驗證 HTTP、匯入、校訂與匯出。輸出目錄需為新目錄。
+升級時先關閉舊版，將 `workspace/`（專案）與 `models/`（模型）複製到新版目錄。專案依路徑引用音檔，原始音檔請留在原處。
+
+## 開發
+
+Python 3.12、FastAPI、React 與 TypeScript。Linux 從原始碼啟動另需 Node.js 與 npm。
 
 ```sh
-/path/to/release/.venv/bin/python scripts/smoke_release.py --release-root /path/to/release --output /tmp/ownsei-smoke
+bash ownsei.sh         # 安裝依賴並啟動
+bash scripts/check.sh  # 執行檢查、測試與前端建置
 ```
 
-```powershell
-& "D:\Ownsei\.venv\Scripts\python.exe" scripts/smoke_release.py --release-root D:\Ownsei --output D:\ownsei-smoke
-```
+## License
 
-原始碼包包含程式、測試、鎖檔、部署腳本、UI 素材與逐檔校驗清單；模型與使用資料獨立保存。
-
-MIT。第三方來源見 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+[MIT](LICENSE)

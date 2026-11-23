@@ -98,6 +98,9 @@ def build_release(root, output, target, cache, work, *, source_commit=None):
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / relative, destination)
         shutil.copytree(root / "frontend/dist", directory / "frontend/dist")
+        # Vite copies public assets to the root of dist in platform bundles.
+        readme = directory / "README.md"
+        readme.write_text(readme.read_text(encoding="utf-8").replace("frontend/public/", "frontend/dist/"), encoding="utf-8")
         for engine, assets in engine_assets(platform, backend).items():
             install_engine(directory, engine, assets, platform, cache)
             trim_engine(directory / "bin" / engine, engine, platform)

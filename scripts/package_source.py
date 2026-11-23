@@ -16,6 +16,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = (
     "README.md",
+    "docs/architecture.svg",
+    "docs/architecture.en.svg",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     ".gitignore",

@@ -1,0 +1,50 @@
+name: Publish Vulkan release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: "0.13.0"
+          python-version: "3.12"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: "22"
+      - name: Build source and Vulkan packages
+        run: |
+          uv sync --locked --no-dev --python 3.12
+          version=$(.venv/bin/python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          test "$GITHUB_REF_NAME" = "v$version"
+          .venv/bin/python scripts/package_release.py --output artifacts/release/build
+          cd artifacts/release/build
+          sha256sum --check SHA256SUMS
+      - name: Publish verified packages
+        working-directory: artifacts/release/build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Ownsei 在本機使用 Haas JA 與 Index-NativeLong 製作日語音聲字幕。
+
+          | 平台 | 下載與啟動 |
+          | --- | --- |
+          | Windows x64 | 解壓縮 `windows-x64-vulkan.zip` 結尾的檔案，雙擊 `Ownsei.cmd`。 |
+          | Linux x86-64 | 解壓縮 `linux-x64-vulkan.tar.gz` 結尾的檔案，在該目錄執行 `bash ownsei.sh`。 |
+
+          首次啟動後，在「模型管理與環境檢查」選擇「準備基本組合」。Linux 需 glibc 2.38 以上、curl 與 FFmpeg。模型另行下載。
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Ownsei $GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/release-notes.md" \
+            ownsei-*-linux-x64-vulkan.tar.gz ownsei-*-windows-x64-vulkan.zip ownsei-*-source.tar.gz SHA256SUMS
