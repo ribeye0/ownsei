@@ -18,7 +18,6 @@ ROOT_FILES = (
     "README.md",
     "docs/architecture.svg",
     "docs/architecture.en.svg",
-    "docs/screenshots/subtitle-editor.png",
     "docs/screenshots/batch-progress.png",
     "docs/screenshots/bilingual-player.png",
     "LICENSE",
