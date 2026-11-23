@@ -69,7 +69,11 @@ def inspect_environment(*, runtimes=False, engines=True):
             )
         add(
             "vulkan_gpu",
-            any(d["id"].startswith("Vulkan") for engine in inventory.values() for d in engine["devices"]),
+            any(
+                d["id"].startswith("Vulkan")
+                for engine in ("speech", "llama")
+                for d in inventory[engine]["devices"]
+            ),
             "Haas uses Vulkan; translation uses CUDA or Vulkan. CPU execution is also available",
             required=False,
         )

@@ -167,3 +167,13 @@ def test_windows_readiness_does_not_require_glibc(tmp_path, monkeypatch):
     report = environment.inspect_environment(engines=False)
     assert report["ready"]
     assert "glibc" not in {c["name"] for c in report["checks"]}
+
+
+def test_doctor_handles_cpu_only_engine_inventory(tmp_path, monkeypatch):
+    monkeypatch.setattr(environment, "ROOT", tmp_path)
+    monkeypatch.setattr(environment, "command", lambda *args, **kwargs: (True, "available"))
+    monkeypatch.setattr(environment.backend, "devices", lambda _: [{"id": "CPU", "name": "CPU"}])
+
+    checks = {item["name"]: item for item in environment.inspect_environment()["checks"]}
+    assert checks["speech"]["ok"] and checks["llama"]["ok"]
+    assert not checks["vulkan_gpu"]["ok"] and not checks["vulkan_gpu"]["required"]
