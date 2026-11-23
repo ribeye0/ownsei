@@ -188,6 +188,10 @@ class Store(VersionStore):
             current.active_version = version
             db.execute("UPDATE tracks SET payload=? WHERE id=?", (current.model_dump_json(), track.id))
 
+    def save_generated_batch(self, cues):
+        # Direct store callers retain their per-cue optimistic revision contract.
+        return {cue.id for cue in cues if self.save_generated(cue, cue.revision)}
+
     def save_generated(self, cue: Cue, expected_revision: int) -> bool:
         with self.db(write=True) as db:
             row = db.execute("SELECT payload FROM cues WHERE id=?", (cue.id,)).fetchone()

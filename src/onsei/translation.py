@@ -121,10 +121,10 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
         return
     # Hide old exports before generating replacements, including model/prompt upgrades.
     for batch in targets:
-        for c in batch:
-            if c.zh_override is None:
-                c.translation_status = "stale"
-                store.save_generated(c, c.revision)
+        writable = [c for c in batch if c.zh_override is None]
+        for c in writable:
+            c.translation_status = "stale"
+        store.save_generated_batch(writable)
     nonce = store.translation_nonce(track_id, model)
     pending = sum(len(batch) for batch in targets)
     total = pending if selected else len(cues)
@@ -342,9 +342,8 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
             if document_context is not None:
                 used = set(document_context.get("history_ids", []))
                 history = [row for row in history if row["id"] in used]
-            for c in batch:
-                if c.zh_override is not None:
-                    continue
+            writable = [c for c in batch if c.zh_override is None]
+            for c in writable:
                 c.zh_auto = converter.convert(translations[c.id])
                 c.translation_status = "translated"
                 c.provenance.pop("review", None)
@@ -369,7 +368,9 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
                         or batch[0].ordinal - CONTEXT_CUES <= n.ordinal <= batch[-1].ordinal + CONTEXT_CUES
                     ],
                 }
-                if not store.save_generated(c, c.revision):
+            saved = store.save_generated_batch(writable)
+            for c in writable:
+                if c.id not in saved:
                     accepted.pop(c.id, None)
                     progress({"message": f"{c.id} 已被修改，略過舊推論結果"})
                 else:

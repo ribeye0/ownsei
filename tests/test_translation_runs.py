@@ -75,3 +75,44 @@ def test_schema_backup_is_valid_and_checkpoint_checks_source(store):
     assert store.new_translation_run(snap, "index-translate-9b", identity="task-run") == run
     with store.db() as db:
         assert json.loads(db.execute("SELECT payload FROM translation_runs").fetchone()[0])["coverage"] == []
+
+
+def test_batch_checks_snapshot_once_and_keeps_concurrent_manual_edit(store, monkeypatch):
+    snapshot = store.input_snapshot("t")
+    result = store.new_translation_run(snapshot, "index-nativelong-9b")
+    session = TranslationSession(store, snapshot, result)
+    cues = session.cues("t")
+    for cue in cues:
+        cue.zh_auto, cue.translation_status = "模型", "translated"
+    store.edit("c1", {"zh_override": "人工"})
+    checks = []
+    validate = store.snapshot_valid
+
+    def counted(*args, **kwargs):
+        checks.append(1)
+        return validate(*args, **kwargs)
+
+    monkeypatch.setattr(store, "snapshot_valid", counted)
+    assert session.save_generated_batch(cues) == {"c0", "c2"}
+    assert len(checks) == 1
+    assert [cue.zh for cue in store.cues("t")] == ["模型", "人工", "模型"]
+
+
+def test_batch_history_failure_rolls_back_rows_revisions_and_session_tokens(store):
+    snapshot = store.input_snapshot("t")
+    result = store.new_translation_run(snapshot, "index-nativelong-9b")
+    session = TranslationSession(store, snapshot, result)
+    cues = session.cues("t")
+    for cue in cues:
+        cue.zh_auto, cue.translation_status = "初稿", "translated"
+    assert session.save_generated_batch(cues[:1]) == {"c0"}
+    before = [cue.revision for cue in store.cues("t")]
+    tokens = session.expected.copy()
+    cues[2].provenance["translation"] = {"document_history": [{"id": "1", "zh": "已改的前文"}]}
+    with pytest.raises(ValueError, match="前文譯文已更新"):
+        session.save_generated_batch(cues[1:])
+    assert session.expected == tokens
+    assert [cue.revision for cue in store.cues("t")] == before
+    assert store.cue("c1").zh is None
+    cues[2].provenance["translation"]["document_history"][0]["zh"] = "初稿"
+    assert session.save_generated_batch(cues[1:]) == {"c1", "c2"}

@@ -224,6 +224,7 @@ class TranslationSession:
         self.store, self.snapshot, self.identity = store, snapshot, identity
         self.path = store.path
         self.expected = {}
+        self.cue_ids_by_line = {str(c["ordinal"] + 1): c["id"] for c in snapshot["cues"]}
         self.include_translation = include_translation
 
     def settings(self):
@@ -273,54 +274,63 @@ class TranslationSession:
                 cues.append(cue)
             return cues
 
+    def _check_history(self, db, history, checked):
+        for reference in history:
+            line = reference["id"]
+            if line not in checked:
+                row = db.execute(
+                    "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
+                    (self.identity, self.cue_ids_by_line.get(line)),
+                ).fetchone()
+                value = json.loads(row[0]) if row else {}
+                text = value.get("zh_override")
+                if text is None and value.get("zh_auto") is not None:
+                    text = subtitle_zh(value["zh_auto"])
+                checked[line] = (text, value.get("translation_status"))
+            text, status = checked[line]
+            if text != reference["zh"] or status not in ("manual", "translated"):
+                raise ValueError("前文譯文已更新，停止保存舊推論；請續跑翻譯")
+
     def save_generated(self, cue, _revision):
+        return cue.id in self.save_generated_batch([cue])
+
+    def save_generated_batch(self, cues):
+        if not cues:
+            return set()
+        updated = {}
         with self.store.db(write=True) as db:
             if self.store.run_metadata(self.identity, db).get("status") == "stale":
                 raise ValueError("來源已更新，停止保存過期結果")
             if not self.store.snapshot_valid(self.snapshot, db, include_translation=self.include_translation):
                 raise ValueError("來源已更新，停止保存舊推論；已完成稿保留")
-            row = db.execute(
-                "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?", (self.identity, cue.id)
-            ).fetchone()
-            if not row:
-                raise ValueError("Translation result was deleted")
-            if digest(json.loads(row[0])) != self.expected.get(cue.id):
-                return False
-            history = (cue.provenance.get("translation") or {}).get("document_history", [])
-            if history and cue.translation_status == "translated":
-                # A Chinese edit can arrive while the next batch is generating.
-                # Check the actual references in the same transaction as saving.
-                references = {
-                    str(json.loads(source)["ordinal"] + 1): json.loads(payload)
-                    for payload, source in db.execute(
-                        """SELECT c.payload,b.payload FROM translation_cues c
-                                  JOIN cues b ON b.id=c.cue_id WHERE c.result_id=?""",
-                        (self.identity,),
-                    )
-                }
-                for reference in history:
-                    current = references.get(reference["id"], {})
-                    text = current.get("zh_override")
-                    if text is None:
-                        raw = current.get("zh_auto")
-                        # History is built from Cue.zh, i.e. the rendered machine
-                        # subtitle. Compare the same representation, while keeping
-                        # human overrides verbatim and raw output intact for audit.
-                        text = subtitle_zh(raw) if raw is not None else None
-                    if text != reference["zh"] or current.get("translation_status") not in (
-                        "manual",
-                        "translated",
-                    ):
-                        raise ValueError("前文譯文已更新，停止保存舊推論；請續跑翻譯")
-            value = self.store._zh_payload(cue)
-            db.execute(
-                "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
-                (json.dumps(value, ensure_ascii=False), self.identity, cue.id),
+            active = self.store._active_translation(
+                db, self.snapshot["track"]["id"], self.snapshot["version"]
             )
-            self.expected[cue.id] = digest(value)
-            if self.store._active_translation(db, cue.track_id, cue.version) == self.identity:
-                raw = db.execute("SELECT payload FROM cues WHERE id=?", (cue.id,)).fetchone()
-                base = Cue.model_validate_json(raw[0])
-                base.revision += 1
-                db.execute("UPDATE cues SET payload=? WHERE id=?", (base.model_dump_json(), cue.id))
-            return True
+            checked = {}
+            for cue in cues:
+                row = db.execute(
+                    "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?",
+                    (self.identity, cue.id),
+                ).fetchone()
+                if not row:
+                    raise ValueError("Translation result was deleted")
+                if digest(json.loads(row[0])) != self.expected.get(cue.id):
+                    continue
+                if cue.translation_status == "translated":
+                    history = (cue.provenance.get("translation") or {}).get("document_history", [])
+                    self._check_history(db, history, checked)
+                value = self.store._zh_payload(cue)
+                db.execute(
+                    "UPDATE translation_cues SET payload=? WHERE result_id=? AND cue_id=?",
+                    (json.dumps(value, ensure_ascii=False), self.identity, cue.id),
+                )
+                checked.pop(str(cue.ordinal + 1), None)
+                updated[cue.id] = digest(value)
+                if active == self.identity:
+                    raw = db.execute("SELECT payload FROM cues WHERE id=?", (cue.id,)).fetchone()
+                    base = Cue.model_validate_json(raw[0])
+                    base.revision += 1
+                    db.execute("UPDATE cues SET payload=? WHERE id=?", (base.model_dump_json(), cue.id))
+        # Publish optimistic-write tokens only after every write commits.
+        self.expected.update(updated)
+        return set(updated)
