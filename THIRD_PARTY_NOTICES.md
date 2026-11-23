@@ -13,8 +13,10 @@
 
 Ownsei SFT48 完整 GGUF 基於 Index Translate 9B revision `4e06279e62352dab96bbeb6fa0579bca5e822d75`；模型發布包附有 Apache-2.0 與來源 NOTICE。
 
-Haas 透過 [speech.cpp](https://github.com/nyosegawa/speech.cpp/tree/v0.11.2) 執行 GGUF。引擎發布版本與檔案校驗值見 `scripts/setup_engines.py`，權重不隨原始碼分發。VAD 使用 [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD) 或 [Silero VAD GGUF](https://huggingface.co/sakasegawa/silero-vad-GGUF)，來源與固定版本見模型登錄表。
+Haas 透過 [speech.cpp](https://github.com/nyosegawa/speech.cpp/tree/v0.11.2) 執行 GGUF。引擎發布版本與檔案校驗值見 `scripts/release_assets.py`，權重不隨原始碼分發。VAD 使用 [FireRedVAD](https://github.com/FireRedTeam/FireRedVAD) 或 [Silero VAD GGUF](https://huggingface.co/sakasegawa/silero-vad-GGUF)，來源與固定版本見模型登錄表。
 
 Catppuccin 配色來源採 MIT 授權，Copyright © 2021 Catppuccin；完整文字見 [Catppuccin-LICENSE](third_party/Catppuccin-LICENSE)，[上游授權](https://github.com/catppuccin/catppuccin/blob/main/LICENSE)。
 
 主要 runtime： [llama.cpp](https://github.com/ggml-org/llama.cpp)、[faster-whisper](https://github.com/SYSTRAN/faster-whisper)、[CTranslate2](https://github.com/OpenNMT/CTranslate2)、[OpenCC](https://github.com/BYVoid/OpenCC)、[FFmpeg](https://ffmpeg.org/legal.html)。它們分別由各自授權管理；Python、前端及模型 runtime 的完整依賴清單見 `uv.lock`、`frontend/package-lock.json`、`runtimes/*.lock`。
+
+發布包附有 speech.cpp 與 llama.cpp 的 MIT 授權。CUDA 包另含 libcudart、cuBLAS 與 cuBLASLt 執行庫，適用 NVIDIA CUDA 授權（`third_party/NVIDIA-CUDA-EULA.html`），不適用 Ownsei 的 MIT 授權。上游二進位內附的 LLVM OpenMP 等授權一併保留。Windows FFmpeg 依賴由安裝腳本直接從上游下載，使用其 LGPL 授權。

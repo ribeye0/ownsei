@@ -10,6 +10,10 @@ from typing import Any, Callable
 
 ROOT = Path(os.environ.get("ONSEI_ROOT", Path(__file__).resolve().parents[2]))
 STATE = ROOT / ".runtime-envs"
+# A Windows release can install FFmpeg locally without changing the user's PATH.
+for _directory in (ROOT / "bin/ffmpeg/bin", ROOT / "bin/ffmpeg"):
+    if _directory.is_dir():
+        os.environ["PATH"] = str(_directory) + os.pathsep + os.environ.get("PATH", "")
 
 
 def gpu_lock_path(state: Path) -> Path:

@@ -1,4 +1,4 @@
-"""Read-only checks for the Linux amd64 Vulkan distribution."""
+"""Read-only checks for Linux and Windows x64 distributions."""
 
 import json
 import platform
@@ -44,15 +44,16 @@ def inspect_environment(*, runtimes=False, engines=True):
 
     add(
         "platform",
-        platform.system() == "Linux" and platform.machine() in ("x86_64", "amd64"),
+        platform.system() in ("Linux", "Windows") and platform.machine().lower() in ("x86_64", "amd64"),
         f"{platform.system()} {platform.machine()}",
     )
-    libc, version = platform.libc_ver()
-    add(
-        "glibc",
-        libc == "glibc" and version_tuple(version) >= MIN_GLIBC,
-        f"{libc} {version}; baseline >= 2.38",
-    )
+    if platform.system() == "Linux":
+        libc, version = platform.libc_ver()
+        add(
+            "glibc",
+            libc == "glibc" and version_tuple(version) >= MIN_GLIBC,
+            f"{libc} {version}; baseline >= 2.38",
+        )
     for name in ("ffmpeg", "ffprobe"):
         path = shutil.which(name)
         ok, detail = command([path, "-version"]) if path else (False, "Not installed")
@@ -68,14 +69,16 @@ def inspect_environment(*, runtimes=False, engines=True):
             )
         add(
             "vulkan_gpu",
-            any(d["id"].startswith("Vulkan") for d in inventory["llama"]["devices"]),
-            "No CUDA dependency; CPU execution is also available",
+            any(d["id"].startswith("Vulkan") for engine in inventory.values() for d in engine["devices"]),
+            "Haas uses Vulkan; translation uses CUDA or Vulkan. CPU execution is also available",
             required=False,
         )
         add("frontend", (ROOT / "frontend/dist/index.html").is_file(), str(ROOT / "frontend/dist"))
     if runtimes:
         for kind in ("vad", "whisper"):
-            python = STATE / kind / "bin/python"
+            from onsei.models import venv_python
+
+            python = venv_python(STATE / kind)
             if not python.exists():
                 add(kind, False, "Optional runtime not installed", required=False)
                 continue

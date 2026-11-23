@@ -14,17 +14,31 @@ import tarfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
-ROOT_FILES = ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", "pyproject.toml", "uv.lock")
+ROOT_FILES = (
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    ".gitignore",
+    "pyproject.toml",
+    "uv.lock",
+    "ownsei.sh",
+    "Ownsei.cmd",
+    "Install.cmd",
+)
 FRONTEND_FILES = ("index.html", "package.json", "package-lock.json", "tsconfig.json", "vite.config.ts")
 DIRECTORIES = {
     "src/onsei": {".py"},
     "tests": {".py"},
     "frontend/src": {".ts", ".tsx", ".css", ".json"},
     "frontend/tests": {".mjs"},
-    "scripts": {".py", ".sh", ".ps1", ".bat"},
+    "scripts": {".py", ".sh", ".ps1", ".bat", ".cmd"},
     ".github/workflows": {".yml", ".yaml"},
 }
-RUNTIMES = ("vad", "whisper", "whisper-cuda", "whisper-convert")
+RUNTIMES = tuple(
+    kind + suffix
+    for kind in ("vad", "whisper", "whisper-cuda", "whisper-convert")
+    for suffix in ("", "-windows")
+)
 ASSETS = ("ownsei-logo.png", "ownsei-logo-dark.png")
 SECRETS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----"),

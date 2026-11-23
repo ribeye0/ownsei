@@ -318,5 +318,5 @@ def test_windows_engine_paths_use_exe_and_path_not_ld_library_path(tmp_path, mon
     monkeypatch.setenv("PATH", "existing-path")
     env = backend.environment("llama")
     assert backend.binary("llama") == p
-    assert env["PATH"] == f"{p.parent};{library.parent};existing-path"
+    assert env["PATH"] == f"{p.parent};{backend.sys.base_prefix};{library.parent};existing-path"
     assert env.get("LD_LIBRARY_PATH") == backend.os.environ.get("LD_LIBRARY_PATH")

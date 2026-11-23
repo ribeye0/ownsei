@@ -10,7 +10,19 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
-dependencies = ["typer>=0.16", "pydantic>=2.11", "numpy>=2.2", "pysubs2>=1.8", "huggingface-hub>=0.34", "httpx>=0.28", "filelock>=3.18", "fastapi>=0.116", "uvicorn>=0.35", "opencc-python-reimplemented>=0.1.7"]
+dependencies = [
+    "typer>=0.16",
+    "pydantic>=2.11",
+    "numpy>=2.2",
+    "pysubs2>=1.8",
+    "huggingface-hub>=0.34",
+    "httpx>=0.28",
+    "filelock>=3.18",
+    "fastapi>=0.116",
+    "uvicorn>=0.35",
+    "opencc-python-reimplemented>=0.1.7",
+    "psutil>=7",
+]
 
 [project.scripts]
 ownsei = "onsei.cli:app"

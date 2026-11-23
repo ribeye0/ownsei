@@ -1,101 +1,109 @@
-"""Install hash-pinned Linux Vulkan engines with atomic directory replacement."""
+"""Install hash-pinned speech.cpp Vulkan and llama.cpp CUDA/Vulkan engines."""
 
+import argparse
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
 
+from release_assets import engine_assets
+
 ROOT = Path(__file__).resolve().parents[1]
-ASSETS = [
-    (
-        "nyosegawa/speech.cpp",
-        "v0.11.2",
-        "speech-0.11.2-linux-x64-vulkan.zip",
-        "28e6841c650c8a4d7c5be06b8e34eb2f14d43f8b26d52fc73f24b504875dc12d",
-        "speech",
-        "speech",
-    ),
-    (
-        "ggml-org/llama.cpp",
-        "b11541",
-        "llama-b11541-bin-ubuntu-vulkan-x64.tar.gz",
-        "bf91ce14ddfda55c01c8b8846aa7d6093a07b0213913b6216ed4a2d6ea78b1f8",
-        "llama",
-        "llama-server",
-    ),
-]
+
+
+def receipt(assets):
+    return {"archives": {a["name"]: a["sha256"] for a in assets}}
+
+
+def extract(archive, target):
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as package:
+            for member in package.infolist():
+                destination = (target / member.filename).resolve()
+                if not destination.is_relative_to(target.resolve()):
+                    raise ValueError("Unsafe archive path")
+                package.extract(member, target)
+                mode = member.external_attr >> 16
+                if mode and sys.platform != "win32":
+                    destination.chmod(mode)
+    else:
+        with tarfile.open(archive) as package:
+            package.extractall(target, filter="data")
+
+
+def install_engine(root, engine, assets, platform, cache):
+    from onsei.util import file_hash, atomic_json
+
+    target = root / "bin" / engine
+    executable = ("speech" if engine == "speech" else "llama-server") + (
+        ".exe" if platform == "windows" else ""
+    )
+    expected = receipt(assets)
+    marker = target / "ownsei-engine.json"
+    if (
+        marker.exists()
+        and json.loads(marker.read_text()) == expected
+        and next(target.rglob(executable), None)
+    ):
+        print(engine + ": ready", flush=True)
+        return
+    cache.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=engine + "-", dir=target.parent))
+    try:
+        for asset in assets:
+            archive = cache / asset["name"]
+            if not archive.is_file() or file_hash(archive) != asset["sha256"]:
+                subprocess.run(
+                    [
+                        sys.executable,
+                        str(ROOT / "scripts/download_release.py"),
+                        asset["url"],
+                        str(archive),
+                        asset["sha256"],
+                    ],
+                    check=True,
+                )
+            extract(archive, staging)
+        if not next(staging.rglob(executable), None):
+            raise ValueError("Missing engine executable: " + executable)
+        atomic_json(staging / "ownsei-engine.json", expected)
+        previous = target.with_name(engine + ".previous")
+        if previous.exists():
+            shutil.rmtree(previous)
+        if target.exists():
+            target.replace(previous)
+        try:
+            staging.replace(target)
+        except BaseException:
+            if previous.exists():
+                previous.replace(target)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+    print(engine + ": installed", flush=True)
 
 
 def main():
-    from onsei.util import file_hash, atomic_json
     from filelock import FileLock
 
-    (ROOT / "bin").mkdir(exist_ok=True)
-    (ROOT / "downloads").mkdir(exist_ok=True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--backend", choices=["cuda", "vulkan"])
+    args = parser.parse_args()
+    profile = json.loads((ROOT / "release.json").read_text()) if (ROOT / "release.json").exists() else {}
+    platform = "windows" if sys.platform == "win32" else "linux"
+    backend = args.backend or profile.get("backend", "vulkan")
+    (ROOT / ".runtime-envs").mkdir(exist_ok=True)
     with FileLock(ROOT / ".runtime-envs/engine-install.lock"):
-        for repo, revision, filename, sha, engine, executable in ASSETS:
-            target = ROOT / "bin" / engine
-            receipt = target / "ownsei-engine.json"
-            expected = {"release": revision, "archive_sha256": sha}
-            if (
-                receipt.exists()
-                and json.loads(receipt.read_text()) == expected
-                and next(target.rglob(executable), None)
-            ):
-                print(f"{engine} {revision}: ready", flush=True)
-                continue
-            archive = ROOT / "downloads" / filename
-            old = ROOT / "downloads" / ("speech.zip" if engine == "speech" else "llama.tar.gz")
-            if not archive.exists() and old.exists() and file_hash(old) == sha:
-                archive = old
-            subprocess.run(
-                [
-                    str(ROOT / ".venv/bin/python"),
-                    str(ROOT / "scripts/download_release.py"),
-                    f"https://github.com/{repo}/releases/download/{revision}/{filename}",
-                    str(archive),
-                    sha,
-                ],
-                check=True,
-            )
-            staging = Path(tempfile.mkdtemp(prefix=engine + "-", dir=ROOT / "bin"))
-            try:
-                if filename.endswith(".zip"):
-                    with zipfile.ZipFile(archive) as package:
-                        for member in package.infolist():
-                            destination = (staging / member.filename).resolve()
-                            if not destination.is_relative_to(staging.resolve()):
-                                raise ValueError("Unsafe archive path")
-                            package.extract(member, staging)
-                            mode = member.external_attr >> 16
-                            if mode:
-                                destination.chmod(mode)
-                else:
-                    with tarfile.open(archive) as package:
-                        package.extractall(staging, filter="data")
-                if not next(staging.rglob(executable), None):
-                    raise ValueError(f"Missing {executable} in release")
-                atomic_json(staging / "ownsei-engine.json", expected)
-                previous = target.with_name(engine + ".previous")
-                if previous.exists():
-                    shutil.rmtree(previous)
-                if target.exists():
-                    target.replace(previous)
-                try:
-                    staging.replace(target)
-                except BaseException:
-                    if previous.exists():
-                        previous.replace(target)
-                    raise
-                if previous.exists():
-                    shutil.rmtree(previous)
-            finally:
-                if staging.exists():
-                    shutil.rmtree(staging)
-            print(f"{engine} {revision}: installed", flush=True)
+        for engine, assets in engine_assets(platform, backend).items():
+            install_engine(ROOT, engine, assets, platform, ROOT / "downloads")
 
 
 if __name__ == "__main__":

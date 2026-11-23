@@ -16,7 +16,7 @@ from onsei.models import DEFAULT_ASR, DEFAULT_TRANSLATION
 from onsei.metrics import GpuMetrics
 from onsei.storage import Store
 from onsei.util import STATE, atomic_json, gpu_lock_path
-from onsei.processes import alive, process_identity, runner_owned
+from onsei.processes import alive, process_identity, runner_owned, spawn_options, signal_group
 from onsei.snapshots import cue_digest
 
 
@@ -348,7 +348,7 @@ def start_job(store: Store, job_id: str):
             [sys.executable, "-m", "onsei.runner", str(store.path), job_id],
             stdout=log,
             stderr=log,
-            start_new_session=True,
+            **spawn_options(),
         )
     job = store.job(job_id)
     if job["status"] == "queued":
@@ -372,7 +372,7 @@ def cancel_job(store: Store, job_id: str):
         )
         store.save_job(job)
         try:
-            os.killpg(job["pid"], signal.SIGTERM)
+            signal_group(job["pid"], signal.SIGTERM)
         except ProcessLookupError:
             pass
         return
@@ -403,7 +403,7 @@ def recover(store: Store):
         elif job["status"] == "cancelling" and time.time() - job.get("cancel_requested_at", time.time()) > 10:
             if runner_owned(job, store.path):
                 try:
-                    os.killpg(job["pid"], signal.SIGKILL)
+                    signal_group(job["pid"], getattr(signal, "SIGKILL", 9))
                 except ProcessLookupError:
                     pass
 
@@ -454,4 +454,6 @@ if __name__ == "__main__":
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, stop)
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, stop)
     run_job(Store(sys.argv[1]), sys.argv[2])

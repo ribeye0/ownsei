@@ -29,7 +29,9 @@ def binary(engine):
         return found
     candidates = sorted((ROOT / "bin" / engine).rglob(filename))
     if not candidates:
-        raise ValueError(f"{filename} missing; run bash scripts/setup-engines.sh")
+        raise ValueError(
+            f"{filename} missing; run scripts/install.ps1 (Windows) or scripts/setup-engines.sh (Linux)"
+        )
     if len(candidates) != 1:
         raise ValueError(
             f"Multiple {filename} versions installed; select one with ONSEI_LLM_BINARY or ONSEI_SPEECH_BINARY"
@@ -41,7 +43,11 @@ def environment(engine):
     path = binary(engine).parent
     windows = sys.platform == "win32"
     libraries = "*.dll" if windows else "*.so*"
-    directories = [str(path)] + sorted({str(p.parent) for p in (ROOT / "bin" / engine).rglob(libraries)})
+    directories = (
+        [str(path)]
+        + ([sys.base_prefix] if windows else [])
+        + sorted({str(p.parent) for p in (ROOT / "bin" / engine).rglob(libraries)})
+    )
     variable, separator = ("PATH", ";") if windows else ("LD_LIBRARY_PATH", os.pathsep)
     return {
         **os.environ,

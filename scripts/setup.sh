@@ -8,5 +8,7 @@ if [[ ! -x .tools/uv ]] || [[ $(.tools/uv --version) != "uv 0.13.0"* ]]; then
   UV_INSTALL_DIR="$PWD/.tools" UV_NO_MODIFY_PATH=1 sh "$installer"
 fi
 .tools/uv python install 3.12
-.tools/uv sync --locked --python 3.12
+args=()
+if [[ -f release.json ]]; then args+=(--no-dev); fi
+.tools/uv sync --locked --python 3.12 "${args[@]}"
 printf 'Ownsei ready: .venv/bin/ownsei doctor\n'

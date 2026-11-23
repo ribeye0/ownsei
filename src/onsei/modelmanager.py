@@ -14,7 +14,7 @@ from pathlib import Path
 from filelock import FileLock, Timeout
 from onsei import models
 from onsei.environment import llama_binary
-from onsei.processes import alive, process_identity
+from onsei.processes import alive, process_identity, process_owned, spawn_options, signal_group
 from onsei.storage import ConflictError, Store
 from onsei.util import ROOT, STATE, atomic_json, gpu_lock_path
 
@@ -74,7 +74,7 @@ def runtime_ready(name):
         except ValueError:
             return False
     if kind:
-        return (STATE / kind / "bin/python").is_file() and (
+        return models.venv_python(STATE / kind).is_file() and (
             not (STATE / kind / "onsei-runtime-installing.json").exists()
         )
     return llama_binary() is not None
@@ -179,7 +179,7 @@ def start_download(names):
                         env=env,
                         stdout=log,
                         stderr=log,
-                        start_new_session=True,
+                        **spawn_options(),
                     )
                 threading.Thread(target=process.wait, daemon=True).start()
             except OSError as error:
@@ -218,15 +218,10 @@ def cancel_download(name):
         if state["status"] not in ACTIVE:
             return state
         if state.get("pid") and alive(state):
-            args = Path(f"/proc/{state['pid']}/cmdline").read_bytes().split(b"\x00")
-            if (
-                not all((os.fsencode(v) in args for v in ("onsei.modelmanager", "worker", name, state["id"])))
-                or os.getpgid(state["pid"]) != state["pid"]
-                or Path(f"/proc/{state['pid']}/cwd").resolve() != ROOT.resolve()
-            ):
+            if not process_owned(state, ["onsei.modelmanager", "worker", name, state["id"]], ROOT):
                 raise ConflictError("無法確認下載程序身分")
             (path.parent / (state["id"] + ".cancel")).touch()
-            os.killpg(state["pid"], signal.SIGTERM)
+            signal_group(state["pid"], signal.SIGTERM)
         elif not state.get("pid"):
             (path.parent / (state["id"] + ".cancel")).touch()
         state.update(status="cancelled", message="已取消；保留可續傳的檔案", updated_at=time.time())

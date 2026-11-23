@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import sys
 import subprocess
 import json
 import shutil
@@ -53,18 +54,27 @@ def model_dir(name: str) -> Path:
     return ROOT / "models" / name
 
 
+def venv_python(directory: Path) -> Path:
+    return directory / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+
+def runtime_lock(kind: str) -> Path:
+    suffix = "-windows" if sys.platform == "win32" else ""
+    return ROOT / "runtimes" / f"{kind}{suffix}.lock"
+
+
 def runtime_python(kind: str) -> Path:
-    p = STATE / kind / "bin/python"
+    p = venv_python(STATE / kind)
     if not p.exists():
         raise ValueError(f"Runtime {kind} missing; run ownsei models prepare --model ...")
     return p
 
 
 def setup_runtime(kind: str, progress=None) -> None:
-    uv = ROOT / ".tools/uv"
+    uv = ROOT / ".tools" / ("uv.exe" if sys.platform == "win32" else "uv")
     if not uv.exists():
         raise ValueError("Run scripts/setup.sh first")
-    lock = ROOT / "runtimes" / f"{kind}.lock"
+    lock = runtime_lock(kind)
     if not lock.exists():
         raise ValueError(f"Missing pinned runtime lock: {lock}")
     env = STATE / kind
@@ -73,7 +83,7 @@ def setup_runtime(kind: str, progress=None) -> None:
     signature = {"lock_sha256": file_hash(lock), "python": "3.12"}
     try:
         if (
-            (env / "bin/python").exists()
+            venv_python(env).exists()
             and (not installing.exists())
             and (json.loads(marker.read_text()) == signature)
         ):
@@ -86,10 +96,10 @@ def setup_runtime(kind: str, progress=None) -> None:
     notify(progress, "runtime_wait", message=f"準備 {kind} 執行環境；等待目前的 GPU 任務完成")
     with FileLock(STATE / "runtime-install.lock"), FileLock(gpu_lock_path(STATE)):
         notify(progress, "runtime", message=f"安裝 {kind} 執行環境（套件進度見詳細紀錄）")
-        if not (env / "bin/python").exists():
-            subprocess.run([str(uv), "venv", "--python", "3.12", str(env)], check=True)
+        if not venv_python(env).exists():
+            subprocess.run([str(uv), "venv", "--python", sys.executable, str(env)], check=True)
         atomic_json(installing, signature)
-        command = [str(uv), "pip", "sync", "--python", str(env / "bin/python"), str(lock)]
+        command = [str(uv), "pip", "sync", "--python", str(venv_python(env)), str(lock)]
         if (ROOT / ".tools/wheels").exists():
             command += ["--find-links", str(ROOT / ".tools/wheels")]
         subprocess.run(command, check=True)
@@ -374,7 +384,13 @@ def worker_env(kind: str) -> dict:
         PYTHONPATH=str(ROOT / "src"),
         ONSEI_ROOT=str(ROOT),
     )
-    site = next((STATE / kind / "lib").glob("python*/site-packages"))
-    libs = [str(p) for p in (site / "nvidia").glob("*/lib")]
-    env["LD_LIBRARY_PATH"] = ":".join(libs + [env.get("LD_LIBRARY_PATH", "")])
+    if sys.platform == "win32":
+        site = STATE / kind / "Lib/site-packages"
+        libs = [str(p) for p in (site / "nvidia").glob("*/bin")]
+        variable = "PATH"
+    else:
+        site = next((STATE / kind / "lib").glob("python*/site-packages"))
+        libs = [str(p) for p in (site / "nvidia").glob("*/lib")]
+        variable = "LD_LIBRARY_PATH"
+    env[variable] = os.pathsep.join(libs + [env.get(variable, "")])
     return env

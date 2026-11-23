@@ -4,7 +4,7 @@
 
 ## 執行
 
-目前安裝與驗收環境：Linux x86-64、Python 3.12、glibc ≥ 2.38。系統需 FFmpeg、Node.js／npm、Vulkan loader 與 GPU 驅動。檔案選擇器使用 KDialog／Zenity，也可直接填入路徑。
+目前實機驗收環境：Linux x86-64、Python 3.12、glibc ≥ 2.38。系統需 FFmpeg、Node.js／npm、Vulkan loader 與 GPU 驅動。檔案選擇器使用 KDialog／Zenity，也可直接填入路徑。
 
 ```sh
 bash scripts/install.sh
@@ -39,9 +39,15 @@ Haas 可選 F16／Q8_0、FireRedVAD／Silero／固定時間窗，時間戳取自
 | 引擎 | `backend.py` 負責執行檔、函式庫環境與裝置選擇，與字幕處理邏輯分離 |
 | 介面 | `api.py` 為專案操作入口，`api_system.py` 為環境與模型 API；`frontend/src/` 保存工作區與共用元件 |
 
-speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。Windows 的程序管理、原生對話框與二進位發行包尚待整合驗收。
+speech.cpp 固定 v0.11.2，llama.cpp 固定 b11541，安裝腳本驗證發布檔 SHA256。Haas 使用 Vulkan／CPU；CUDA 發行配置僅切換 llama.cpp。提供 Linux／Windows x64 的 CUDA 與 Vulkan 發布包；Windows 包仍待原生環境驗收。
 
 CLI 環境設定：`ONSEI_ROOT` 指定資料根目錄；`ONSEI_ASR_DEVICE`、`ONSEI_LLM_DEVICE` 指定 `auto`／`CPU`／對應 GPU ID；`ONSEI_VAD_ENGINE` 指定 `firered`／`silero`／`none`。可用 `ONSEI_SPEECH_BINARY`、`ONSEI_LLM_BINARY` 明確指定引擎。GUI 任務會保存自己的設定。
+
+## 發布包
+
+Release 包含建置好的網頁及 speech.cpp／llama.cpp；首次安裝下載 Python 3.12 與依賴，不需 Node.js。Linux 執行 `bash ownsei.sh`；Windows 執行 `Ownsei.cmd`，`Install.cmd` 可單獨安裝環境。Windows 缺少 FFmpeg 時由安裝腳本下載固定的 LGPL 版本。
+
+CUDA 包的翻譯引擎使用 CUDA 13.4，需相容的 NVIDIA 驅動；Haas 仍使用 Vulkan。Vulkan 包適用 NVIDIA／AMD／Intel。模型由介面另行下載。二進位與授權清單見 `release.json`、`manifest.json`、`third_party/`。
 
 ## 開發與打包
 
@@ -50,6 +56,7 @@ bash scripts/setup.sh
 (cd frontend && npm ci)
 bash scripts/check.sh
 .venv/bin/python scripts/package_source.py --output artifacts/release
+.venv/bin/python scripts/package_release.py --cache downloads --output artifacts/release/platforms
 ```
 
 `check.sh` 執行靜態檢查、後端與前端測試、前端建置、原始碼檔案檢查；GitHub Actions 使用相同入口。前端開發伺服器以 `npm run dev` 啟動，API proxy 指向 8878。

@@ -114,7 +114,7 @@ export function ExportDialog({ base, tracks, current, models, onClose }: {
       <option value="download">{ui("提供下載（檔案位於頁面下方）")}</option><option value="source">{ui("同時寫入原音檔目錄")}</option><option value="sub">{ui("同時寫入原音檔目錄的 sub 子目錄")}</option>
     </select></label>
     {destination !== "download" && <>
-      <div className="export-destinations">{tracks.filter(t => selected.includes(t.id)).map(t => <p key={t.id} className="code">{t.source.slice(0,t.source.lastIndexOf("/")+1)}{destination === "sub" ? "sub/" : ""}</p>)}</div>
+      <div className="export-destinations">{tracks.filter(t => selected.includes(t.id)).map(t => <p key={t.id} className="code">{t.source.slice(0,Math.max(t.source.lastIndexOf("/"), t.source.lastIndexOf("\\"))+1)}{destination === "sub" ? "sub/" : ""}</p>)}</div>
       <label className="check"><input type="checkbox" disabled={busy} checked={overwrite} onChange={e => {setOverwrite(e.target.checked); setDelivery(null);}}/>{ui("覆寫已有的同名字幕檔案")}</label>
       <small>{overwrite ? ui("已啟用覆寫：同名檔案會被取代，包含目錄內已有的人工字幕。") : ui("預設保留已有的同名檔案；未寫入的項目仍可下載。")}</small>
     </>}

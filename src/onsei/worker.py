@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import wave
 from pathlib import Path
+
+
+# CPython's Windows extension loader requires explicit DLL directories.
+_dll_directories = []
+if sys.platform == "win32":
+    site = Path(sys.prefix) / "Lib/site-packages/nvidia"
+    for directory in site.glob("*/bin"):
+        _dll_directories.append(os.add_dll_directory(str(directory)))
 
 
 def write(path, value):
