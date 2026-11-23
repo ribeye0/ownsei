@@ -24,6 +24,9 @@ def translation_options(settings=None, model=NATIVE_LONG):
         "history": model == NATIVE_LONG,
         **value,
     }
+    compact_rows = result.pop("compact_rows", False)
+    if type(compact_rows) is not bool:
+        raise ValueError("Invalid translation settings")
     if (
         set(result) != {"context", "names", "history"}
         or type(result["context"]) is not int
@@ -32,6 +35,8 @@ def translation_options(settings=None, model=NATIVE_LONG):
         or type(result["history"]) is not bool
     ):
         raise ValueError("Invalid translation settings")
+    if compact_rows and model == NATIVE_LONG:
+        result["compact_rows"] = True
     return result
 
 

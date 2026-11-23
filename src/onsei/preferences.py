@@ -26,12 +26,19 @@ _OLD_HANS = (
     "只翻译目标句段，背景仅供理解，每个ID对应一项译文，text只放台词。"
     "字幕句尾不加句号或逗号，保留问号、感叹号与必要省略号。"
 )
+_PREVIOUS_HANT = STYLE_INSTRUCTION.replace("自然、順口。", "自然、順口、簡潔。", 1)
+_PREVIOUS_HANS = SIMPLIFIED_STYLE_INSTRUCTION.replace("自然、顺口。", "自然、顺口、简洁。", 1)
 _OLD_TRADITIONAL_STYLES = (
+    _PREVIOUS_HANT,
+    _PREVIOUS_HANT.replace("\n", "\n\n", 1),
     _OLD_HANT,
-    STYLE_INSTRUCTION.replace("\n", "\n\n", 1),
     _OLD_HANT.replace("音聲字幕的繁體中文", "音聲字幕的台灣繁體中文", 1),
 )
-_OLD_SIMPLIFIED_STYLES = (_OLD_HANS, SIMPLIFIED_STYLE_INSTRUCTION.replace("\n", "\n\n", 1))
+_OLD_SIMPLIFIED_STYLES = (
+    _OLD_HANS,
+    _PREVIOUS_HANS,
+    _PREVIOUS_HANS.replace("\n", "\n\n", 1),
+)
 MAX_STYLE_LENGTH = 2000
 NAME_SUFFIXES = ("ちゃん", "くん", "君", "さん", "さま", "様", "先輩", "センパイ", "せんぱい", "殿")
 

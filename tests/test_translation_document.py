@@ -108,11 +108,11 @@ class Client:
             # Force a window with an exact token budget rather than a char cap.
             rows = json["content"].count("文脈")
             return Response({"tokens": [0] * (20000 if self.oversized else rows * 300 + 100)})
-        return Response({"content": '[{"id":"50","source":"こんにちは","text":"你好"}]', "stop_type": "eos"})
+        return Response({"content": '[{"50":"こんにちは","text":"你好"}]', "stop_type": "eos"})
 
 
 def test_token_fitted_window_is_audited_without_losing_target(tmp_path):
-    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 16384})
+    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 16384, "compact_rows": True})
     engine.client = Client()
     assert json.loads(engine.generate(value())) == [{"id": "cue-50", "text": "你好"}]
     audit = json.loads(next(tmp_path.glob("request-*.input.json")).read_text())
@@ -126,7 +126,7 @@ def test_token_fitted_window_is_audited_without_losing_target(tmp_path):
 
 
 def test_oversized_targets_are_rejected_before_generation(tmp_path):
-    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 16384})
+    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 16384, "compact_rows": True})
     engine.client = Client(oversized=True)
     with pytest.raises(ValueError, match="context budget"):
         engine.generate(value())
@@ -141,7 +141,7 @@ def test_history_is_trimmed_before_japanese_and_audited(tmp_path):
                 return Response({"tokens": [0] * 50000})
             return super().post(path, json)
 
-    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 32768})
+    engine = Llama(NATIVE_LONG, tmp_path, translation_options={"context": 32768, "compact_rows": True})
     engine.client = HistoryClient()
     engine.generate({**value(), "document_history": [{"id": "49", "ja": "前文", "zh": "前譯文"}]})
     audit = json.loads(next(tmp_path.glob("request-*.input.json")).read_text())
@@ -183,3 +183,12 @@ def test_document_edit_invalidates_distant_inactive_versions_and_preserves_manua
         }
     assert rows["c140"]["translation_status"] == "stale"
     assert rows["c149"]["zh_override"] == "人工" and rows["c149"]["translation_status"] == "manual"
+
+
+def test_compact_wire_format_is_native_only_and_opt_in():
+    options = {"translation_options": {"compact_rows": True}}
+    native = model_config(NATIVE_LONG)
+    assert model_config(NATIVE_LONG, {"translation_options": {"compact_rows": False}}) == native
+    assert native["protocol"] == "ordered-grounded-json"
+    assert model_config(NATIVE_LONG, options)["protocol"] == "ordered-keyed-source-v1"
+    assert model_config("index-translate-9b", options) == model_config("index-translate-9b")

@@ -546,6 +546,7 @@ class TranslationOptionsRequest(BaseModel):
     context: Literal[8192, 16384, 32768, 65536, 98304, 131072, 262144] | None = None
     names: bool | None = None
     history: bool | None = None
+    compact_rows: bool | None = None
 
 
 class JobRequest(BaseModel):
