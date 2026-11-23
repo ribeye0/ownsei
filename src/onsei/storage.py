@@ -19,8 +19,8 @@ class ConflictError(ValueError):
     """The caller's snapshot no longer matches the result being changed."""
 
 
-def read_cue(raw: str) -> Cue:
-    cue = Cue.model_validate_json(raw)
+def read_cue(raw: str | Cue) -> Cue:
+    cue = raw if isinstance(raw, Cue) else Cue.model_validate_json(raw)
     # Derived validity for legacy data; preserve the original machine text for audit.
     cue.review_flags = [flag for flag in cue.review_flags if flag != "translation_invalid_output"]
     if cue.zh_override is None and polluted(cue.zh_auto):
@@ -57,7 +57,10 @@ class Store(VersionStore):
         """)
             db.execute(
                 "INSERT INTO settings VALUES (?,?)",
-                ("project", json.dumps({"title": title, "glossary": {}, "notes": "", "created_at": time.time()})),
+                (
+                    "project",
+                    json.dumps({"title": title, "glossary": {}, "notes": "", "created_at": time.time()}),
+                ),
             )
         return cls(p)
 
@@ -124,7 +127,10 @@ class Store(VersionStore):
 
     def activate_transcript(self, track_id, version):
         with self.db(write=True) as db:
-            track, _ = self.read_result(db, track_id)
+            row = db.execute("SELECT payload FROM tracks WHERE id=?", (track_id,)).fetchone()
+            if not row:
+                raise ValueError("Unknown track")
+            track = Track.model_validate_json(row[0])
             if not db.execute(
                 "SELECT 1 FROM cues WHERE track_id=? AND version=? LIMIT 1", (track_id, version)
             ).fetchone():
@@ -144,7 +150,7 @@ class Store(VersionStore):
                     (track_id, version),
                 )
             ]
-            return [read_cue(c.model_dump_json()) for c in self.read_version_cues(db, raws)]
+            return [read_cue(c) for c in self.read_version_cues(db, raws)]
 
     def read_result(self, db, track_id):
         row = db.execute("SELECT payload FROM tracks WHERE id=?", (track_id,)).fetchone()
@@ -158,7 +164,7 @@ class Store(VersionStore):
                 (track_id, track.active_version),
             )
         ]
-        return track, [read_cue(c.model_dump_json()) for c in self.read_version_cues(db, raws)]
+        return track, [read_cue(c) for c in self.read_version_cues(db, raws)]
 
     def result(self, track_id):
         with self.db() as db:
@@ -167,6 +173,7 @@ class Store(VersionStore):
 
     def cue(self, cue_id: str) -> Cue:
         with self.db() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT payload FROM cues WHERE id=?", (cue_id,)).fetchone()
             if not row:
                 raise ValueError("Unknown cue")

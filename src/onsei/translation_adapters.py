@@ -47,6 +47,16 @@ def parse_reply(reply: str, ids: list[str]) -> dict[str, str]:
     return found
 
 
+def native_document_prefix(target_language, document):
+    target = "简体中文" if target_language == "zh-Hans" else "繁體中文"
+    return (
+        f"请将以下日语音声作品的待译台词翻译成{target}，并且严格遵循所有约束要求。"
+        "\n这是一段连续对话，请在全文范围内理解人物关系，保持译名、称谓和表达一致。"
+        "\n\n【日文逐字稿上下文：只供理解，不要输出】\n"
+        + json.dumps(document, ensure_ascii=False, separators=(",", ":"))
+    )
+
+
 def build_prompt(model: str, data: dict) -> tuple[str, list[dict], dict[str, str]]:
     preferences = translation_preferences(data)
     glossary = effective_glossary(data, [row["text"] for row in data["lines"]])
@@ -91,14 +101,8 @@ def build_prompt(model: str, data: dict) -> tuple[str, list[dict], dict[str, str
     )
 
     if model == NATIVE_LONG:
-        target = "简体中文" if preferences["target_language"] == "zh-Hans" else "繁體中文"
-        # Adapt the official ja-zh document template to timed subtitles: the
-        # entire source is reference data, while only target rows are emitted.
         prompt = (
-            f"请将以下日语音声作品的待译台词翻译成{target}，并且严格遵循所有约束要求。"
-            "\n这是一段连续对话，请在全文范围内理解人物关系，保持译名、称谓和表达一致。"
-            "\n\n【日文逐字稿上下文：只供理解，不要输出】\n"
-            + compact(data.get("document", []))
+            native_document_prefix(preferences["target_language"], data.get("document", []))
             + (
                 "\n\n【前文已完成译文：只供承接，不要重译】\n"
                 + compact(data["document_history"])

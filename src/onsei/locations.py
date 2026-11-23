@@ -27,31 +27,35 @@ def resolve_prefix(prefix, candidates):
     return found[0]
 
 
-def location_candidates(store, location):
-    tracks = [t.id for t in store.tracks()]
-    versions = [v["version"] for v in store.transcript_versions(location["track"])]
-    translations = [v["id"] for v in store.translation_versions(location["track"], location["transcript"])]
-    cues = (
-        [c.id for c in store.cues(location["track"], location["transcript"])]
-        if location["transcript"]
-        else []
-    )
-    return [tracks, versions, translations, cues]
-
-
 def compact_location(store, location, projects):
-    candidates = [projects, *location_candidates(store, location)]
+    track, version = location["track"], location["transcript"]
+    store.ensure_legacy_result(track)
+    with store.db() as db:
+        db.execute("BEGIN")
+        tracks = [r[0] for r in db.execute("SELECT id FROM tracks")]
+        versions = [r[0] for r in db.execute("SELECT DISTINCT version FROM cues WHERE track_id=?", (track,))]
+        translations = [
+            r[0]
+            for r in db.execute(
+                "SELECT id FROM translation_versions WHERE track_id=? AND version=?", (track, version)
+            )
+        ]
+        cues = (
+            dict(db.execute("SELECT id,ordinal FROM cues WHERE track_id=? AND version=?", (track, version)))
+            if location["cue"]
+            else {}
+        )
     pieces = [
         unique_prefix(location[k], pool)
-        for k, pool in zip(("project", "track", "transcript", "translation", "cue"), candidates)
+        for k, pool in zip(
+            ("project", "track", "transcript", "translation", "cue"),
+            (projects, tracks, versions, translations, cues),
+        )
     ]
     if location["cue"]:
-        cues = store.cues(location["track"], location["transcript"])
-        cue = next(c for c in cues if c.id == location["cue"])
-        # Cue IDs include the entire track/version prefix. A stable ordinal
-        # within the already pinned transcript is much shorter.
-        if sum(c.ordinal == cue.ordinal for c in cues) == 1:
-            pieces[-1] = f"@{cue.ordinal + 1}"
+        ordinal = cues[location["cue"]]
+        if sum(n == ordinal for n in cues.values()) == 1:
+            pieces[-1] = f"@{ordinal + 1}"
     return "OW1/" + "/".join(pieces)
 
 

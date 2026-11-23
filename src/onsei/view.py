@@ -1,7 +1,6 @@
 """A consistent, read-only snapshot for one track's result controls and editor."""
 
 import json
-from collections import defaultdict
 
 from onsei.domain import Cue, Track
 from onsei.storage import Store, read_cue
@@ -11,7 +10,7 @@ from onsei.translation_contract import polluted
 from onsei.translation_runs import run_summary
 
 
-def track_view(store: Store, track_id: str) -> dict:
+def track_view(store: Store, track_id: str, *, compact=False) -> dict:
     # Preserve the previous result-list endpoint's legacy capture behavior.
     # Migration finishes before the read transaction so the view stays coherent.
     store.ensure_legacy_result(track_id)
@@ -21,29 +20,36 @@ def track_view(store: Store, track_id: str) -> dict:
         if row is None:
             raise ValueError("Unknown track")
         track = Track.model_validate_json(row[0])
-        grouped = defaultdict(list)
-        for (raw,) in db.execute("SELECT payload FROM cues WHERE track_id=? ORDER BY ordinal", (track_id,)):
-            cue = Cue.model_validate_json(raw)
-            grouped[cue.version].append(cue)
         active = store._active_translation(db, track_id, track.active_version)
-        cues = [
-            read_cue(c.model_dump_json())
-            for c in store.read_version_cues(db, [c.model_dump_json() for c in grouped[track.active_version]])
+        raws = [
+            r[0]
+            for r in db.execute(
+                "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal",
+                (track_id, track.active_version),
+            )
         ]
+        cues = [read_cue(c) for c in store.read_version_cues(db, raws, compact=compact)]
         versions = []
         for version, created_at, estimated in db.execute(
             "SELECT version,created_at,estimated FROM transcript_versions WHERE track_id=? ORDER BY rowid DESC",
             (track_id,),
         ):
-            if not grouped[version]:
+            count = db.execute(
+                "SELECT count(*) FROM cues WHERE track_id=? AND version=?", (track_id, version)
+            ).fetchone()[0]
+            if not count:
                 continue
-            source = grouped[version][0].provenance
+            raw = db.execute(
+                "SELECT payload FROM cues WHERE track_id=? AND version=? ORDER BY ordinal LIMIT 1",
+                (track_id, version),
+            ).fetchone()[0]
+            source = Cue.model_validate_json(raw).provenance
             versions.append(
                 {
                     "version": version,
                     "created_at": created_at,
                     "created_at_estimated": bool(estimated),
-                    "cues": len(grouped[version]),
+                    "cues": count,
                     "model": source.get("model", "imported"),
                     "processed_duration_ms": source.get("processed_duration_ms"),
                     "limit_ms": source.get("limit_ms"),

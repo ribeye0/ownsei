@@ -115,6 +115,8 @@ function App() {
   const [workspaceTab, setWorkspaceTab] = useState("subtitles");
   const [trackSearch, setTrackSearch] = useState("");
   const styleReturn = useRef("");
+  const reportRequest = useRef(0);
+  const [reportError, setReportError] = useState("");
   const [reportFull, setReportFull] = useState("");
   const [reportText, setReportText] = useState(""),
     [reportCopied, setReportCopied] = useState(false);
@@ -188,6 +190,8 @@ function App() {
       : ui("尚無轉錄");
   async function report(cue?: Cue) {
     if (!track) return;
+    const request = ++reportRequest.current;
+    setReportError("");
     setReportCopied(false);
     const context = {
       projectTitle: details?.settings.title || pid,
@@ -207,17 +211,27 @@ function App() {
       },
       cue,
     };
-    const full = issueReport(context);
-    setReportFull(full);
-    setReportText(full);
-    try {
-      const result = await api<{
-        code: string;
-      }>("/locations/compact", "POST", context.location);
-      setReportText(issueReport(context, { full: false, code: result.code }));
-    } catch {
-      /* Full IDs remain available if a concurrent deletion invalidates the short reference. */
+    setReportFull(cue ? "" : issueReport(context));
+    setReportText(issueReport(context, {full:false}));
+    const short = api<{code:string}>("/locations/compact", "POST", context.location)
+      .then(({code}) => {
+        if (request === reportRequest.current) setReportText(issueReport(context, {full:false, code}));
+      }).catch(() => {}); // The full location IDs remain usable.
+    if (cue) {
+      const query = new URLSearchParams({revision:String(cue.revision)});
+      if (context.location.translation) query.set("translation", context.location.translation);
+      try {
+        const provenance = await api<Cue["provenance"]>(base + `/cues/${encodeURIComponent(cue.id)}/diagnostics?${query}`);
+        if (request === reportRequest.current) setReportFull(issueReport({...context, cue:{...cue, provenance}}));
+      } catch (error) {
+        if (request === reportRequest.current) setReportError(error instanceof Error ? ui(error.message) : String(error));
+      }
     }
+    await short;
+  }
+  function closeReport() {
+    ++reportRequest.current;
+    setReportText("");
   }
   const guard = async (fn: () => Promise<void>) => {
     const owner = { ...selectionRef.current };
@@ -357,7 +371,7 @@ function App() {
     }
     await resultReads.current.run(
       (signal) =>
-        api<TrackView>(base + `/tracks/${tid}/view`, "GET", undefined, {
+        api<TrackView>(base + `/tracks/${tid}/view?compact=true`, "GET", undefined, {
           signal,
         }),
       applyView,
@@ -439,7 +453,7 @@ function App() {
       projectReads.current.cancel();
       resultReads.current.cancel();
       const view = await api<TrackView>(
-        base + `/tracks/${tid}/${kind}/${id}`,
+        base + `/tracks/${tid}/${kind}/${id}?compact=true`,
         "POST",
       );
       if (selectionRef.current.pid !== pid || selectionRef.current.tid !== tid)
@@ -543,7 +557,7 @@ function App() {
         requestAnimationFrame(() => searchInput.current?.focus());
       }
       if (e.key === "Escape" && reportText) {
-        setReportText("");
+        closeReport();
         return;
       }
       if (e.key === "Escape" && dialog !== "import" && !playerExpanded) {
@@ -1152,8 +1166,8 @@ function App() {
               onFocus={(e) => e.currentTarget.select()}
             />
             <div className="manager-actions">
-              <button onClick={() => setReportText("")}>{ui("關閉")}</button>
-              <button
+              <button onClick={closeReport}>{ui("關閉")}</button>
+              <button disabled={!reportFull}
                 onClick={() =>
                   void navigator.clipboard
                     .writeText(reportFull)
@@ -1174,6 +1188,7 @@ function App() {
                 {ui("複製定位資訊")}
               </button>
             </div>
+            {reportError && <p role="alert">{reportError}</p>}
             <small role="status">
               {reportCopied
                 ? ui("已複製，可直接貼上回報")

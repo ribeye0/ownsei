@@ -419,8 +419,8 @@ def cues(p: str, t: str):
 
 
 @app.get("/api/projects/{p}/tracks/{t}/view")
-def result_view(p: str, t: str):
-    return track_view(project(p), t)
+def result_view(p: str, t: str, compact: bool = False):
+    return track_view(project(p), t, compact=compact)
 
 
 @app.get("/api/projects/{p}/jobs")
@@ -459,6 +459,14 @@ class EditRequest(BaseModel):
     translation_version: str | None = None
 
 
+@app.get("/api/projects/{p}/cues/{c}/diagnostics")
+def cue_diagnostics(p: str, c: str, revision: int, translation: str | None = None):
+    cue = project(p).cue(c)
+    if cue.revision != revision or cue.provenance.get("translation_version") != translation:
+        raise HTTPException(409, "字幕版本已變更，請重新開啟問題回報")
+    return cue.provenance
+
+
 @app.patch("/api/projects/{p}/cues/{c}")
 def edit(p: str, c: str, body: EditRequest):
     s = project(p)
@@ -478,12 +486,13 @@ def versions(p: str, t: str):
 
 
 @app.post("/api/projects/{p}/tracks/{t}/versions/{v}")
-def activate(p: str, t: str, v: str):
+def activate(p: str, t: str, v: str, compact: bool = False):
     with idle_project(p) as s:
-        if not s.cues(t, v):
-            raise HTTPException(404, "Unknown transcript version")
-        s.activate_transcript(t, v)
-        view = track_view(s, t)
+        try:
+            s.activate_transcript(t, v)
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+        view = track_view(s, t, compact=compact)
     return {"ok": True, **view}
 
 
@@ -518,10 +527,10 @@ def translation_versions(p: str, t: str, version: str | None = None):
 
 
 @app.post("/api/projects/{p}/tracks/{t}/translations/{v}")
-def activate_translation(p: str, t: str, v: str):
+def activate_translation(p: str, t: str, v: str, compact: bool = False):
     with idle_project(p) as s:
         s.activate_translation(t, v)
-        view = track_view(s, t)
+        view = track_view(s, t, compact=compact)
     return {"ok": True, **view}
 
 

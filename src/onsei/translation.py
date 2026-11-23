@@ -244,6 +244,7 @@ def translate(store: Store, track_id: str, model: str, selected: list[str] | Non
                         reply = engine.generate(
                             {
                                 **data,
+                                "reuse_document_prefix": len(targets) > 1,
                                 "retry": attempt > 0 or repetition_recovery,
                                 "retry_error": str(error or ("輸出異常重複" if repetition_recovery else "")),
                                 "repetition_recovery": repetition_recovery

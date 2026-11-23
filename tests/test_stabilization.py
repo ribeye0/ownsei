@@ -107,6 +107,29 @@ def test_api_conflict_and_wrong_result_keep_stored_text(result, tmp_path, monkey
     assert store.cue("c").zh == "錯誤結果"
 
 
+def test_compact_view_and_diagnostics_match_the_displayed_revision(result, monkeypatch):
+    import onsei.api as api
+
+    store, track, _ = result
+    monkeypatch.setattr(api, "project", lambda _: store)
+    client = TestClient(api.app, base_url="http://127.0.0.1")
+    url = f"/api/projects/p/tracks/{track.id}/view"
+    full = client.get(url).json()
+    compact = client.get(url, params={"compact": True}).json()
+    old = full["cues"][0]
+    new = compact["cues"][0]
+    assert {k: v for k, v in old.items() if k != "provenance"} == {
+        k: v for k, v in new.items() if k != "provenance"
+    }
+    assert set(new["provenance"]) <= {"alignment_diagnostic", "translation_version"}
+    assert compact["translations"] == full["translations"] and compact["files"] == full["files"]
+    params = {"revision": new["revision"], "translation": new["provenance"]["translation_version"]}
+    path = f"/api/projects/p/cues/{new['id']}/diagnostics"
+    assert client.get(path, params=params).json() == old["provenance"]
+    store.edit(new["id"], {"zh_override": "人工校訂"}, new["revision"])
+    assert client.get(path, params=params).status_code == 409
+
+
 def test_replaced_source_blocks_cached_decode_and_playback(result):
     store, track, source = result
     cached = pcm(store, track)

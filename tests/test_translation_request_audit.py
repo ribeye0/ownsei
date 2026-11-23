@@ -151,3 +151,37 @@ def test_truncated_request_records_specific_cause_without_discarding_raw_reply(t
     if code == "repetition":
         assert engine.last_request["failure"]["repeated_chars"] == 200
         assert reply.read_text().endswith("嗯" * 200)
+
+
+@pytest.mark.parametrize("warm_failure", [False, True])
+def test_nativelong_primes_only_shared_document_and_translates_after_warm_failure(tmp_path, warm_failure):
+    from onsei.context import NATIVE_LONG
+    from onsei.translation_adapters import native_document_prefix
+
+    class NativeClient(Client):
+        def post(self, path, json):
+            if path == "/apply-template":
+                return Response({"prompt": "<user>" + json["messages"][0]["content"] + "</user>"})
+            if path == "/completion" and json.get("n_predict") == 1:
+                self.calls.append((path, json))
+                if warm_failure:
+                    raise httpx.ReadError("warmup unavailable")
+                return Response({})
+            return super().post(path, json)
+
+    engine = Llama(NATIVE_LONG, tmp_path)
+    engine.client = NativeClient()
+    doc = [{"id": "1", "text": "こんにちは"}, {"id": "2", "text": "明日も"}]
+    value = {**data(), "document": doc, "document_history": [{"id": "0", "text": "早安"}]}
+    engine.generate(value)
+    engine.generate({**value, "reuse_document_prefix": True})
+    engine.generate({**value, "reuse_document_prefix": True})
+    requests = [r for path, r in engine.client.calls if path == "/completion"]
+    assert len(requests) == 4
+    assert requests[0] == requests[2] == requests[3]
+    assert requests[1]["prompt"] == "<user>" + native_document_prefix("zh-Hant", doc)
+    assert requests[0]["prompt"].startswith(requests[1]["prompt"])
+    assert engine.counters["document_warmup_failures" if warm_failure else "document_warmups"] == 1
+    previous_calls = len(engine.client.calls)
+    engine._warm_document({**value, "reuse_document_prefix": True}, {"scope": "window"}, "unused")
+    assert len(engine.client.calls) == previous_calls

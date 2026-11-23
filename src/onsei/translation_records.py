@@ -39,11 +39,15 @@ def expand_payload(raw, batches):
 
 
 def translation_values(db, result, *, diagnostics=True):
-    batches = batch_records(db, result)
-    if not diagnostics:
-        # Timed subtitles only need the script tag. Keep full metadata for JSONL.
+    if diagnostics:
+        batches = batch_records(db, result)
+    else:
         batches = {
-            key: {k: v for k, v in meta.items() if k == "target_language"} for key, meta in batches.items()
+            key: {"target_language": language} if language else {}
+            for key, language in db.execute(
+                "SELECT id,json_extract(payload,'$.target_language') FROM translation_batches WHERE result_id=?",
+                (result,),
+            )
         }
     return {
         cue_id: expand_payload(raw, batches)

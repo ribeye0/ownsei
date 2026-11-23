@@ -1,5 +1,5 @@
 from __future__ import annotations
-from onsei.context import fit_context
+from onsei.context import NATIVE_LONG, fit_context
 from onsei import backend
 
 import json
@@ -12,13 +12,18 @@ from pathlib import Path
 
 import httpx
 
-from onsei.preferences import effective_glossary
+from onsei.preferences import effective_glossary, translation_preferences
 from onsei.models import REGISTRY, translation_files
 from onsei.translation_contract import output_grammar
 from onsei.translation_runtime import DecodingProfile, decoding_profile, inference_summary
 from onsei.util import atomic_json, digest
 
-from onsei.translation_adapters import parse_reply, build_prompt, normalize_grounded_reply
+from onsei.translation_adapters import (
+    parse_reply,
+    build_prompt,
+    native_document_prefix,
+    normalize_grounded_reply,
+)
 
 from onsei.translation_config import CONFIG, model_config, model_prompt_version
 from onsei.translation_diagnostics import TranslationResponseError
@@ -54,6 +59,7 @@ class Llama:
         self.started = None
         self.run_id = str(time.time_ns())
         self.last_request = None
+        self.warmed_document = None
         self.prefill_batch = 2048
         self.prefill_microbatch = 512
 
@@ -90,6 +96,7 @@ class Llama:
             raise
 
     def _start_server(self):
+        self.warmed_document = None
         startup = time.monotonic()
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -342,6 +349,38 @@ class Llama:
         self.record("cancellation_restarts")
         return "restarted"
 
+    def _warm_document(self, data, context, rendered):
+        if self.model != NATIVE_LONG or not data.get("reuse_document_prefix") or context["scope"] != "track":
+            return
+        language = translation_preferences(data)["target_language"]
+        key = (context["source_sha256"], language)
+        if self.warmed_document == key:
+            return
+        self.warmed_document = key
+        prefix = native_document_prefix(language, data["document"])
+        start = rendered.find(prefix)
+        if start < 0:
+            return
+        # Finish a short request at the reusable document boundary so llama.cpp
+        # can checkpoint it before reading the changing history and target cues.
+        started = time.monotonic()
+        try:
+            result = self.client.post(
+                "/completion",
+                json={
+                    "prompt": rendered[: start + len(prefix)],
+                    "n_predict": 1,
+                    "temperature": 0,
+                    "cache_prompt": True,
+                },
+            )
+            result.raise_for_status()
+            self.record("document_warmups")
+        except httpx.HTTPError:
+            self.record("document_warmup_failures")
+        finally:
+            self.counters["document_warmup_seconds"] += round(time.monotonic() - started, 3)
+
     def generate(self, data: dict) -> str:
         self.last_request = None
         preparation = time.monotonic()
@@ -425,6 +464,7 @@ class Llama:
             self.log.flush()
         if input_tokens + budget + 64 > self.config["context"]:
             raise ValueError("Prompt exceeds context budget; split batch or shorten notes/glossary")
+        self._warm_document(data, document_context, completion["prompt"])
         start = time.monotonic()
         self.last_request = {
             "lines": len(lines),

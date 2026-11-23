@@ -267,11 +267,15 @@ class VersionStore(TranslationRuns):
             row = db.execute(
                 "SELECT payload FROM translation_cues WHERE result_id=? AND cue_id=?", (active, cue.id)
             ).fetchone()
-            value = (
-                expand_payload(row[0], batch_records(db, active))
-                if row
-                else {"zh_auto": None, "zh_override": None, "translation_status": "pending"}
-            )
+            if row:
+                value = json.loads(row[0])
+                if ref := value.pop("batch_ref", None):
+                    batch = db.execute(
+                        "SELECT payload FROM translation_batches WHERE result_id=? AND id=?", (active, ref)
+                    ).fetchone()
+                    value["translation"] = json.loads(batch[0])
+            else:
+                value = {"zh_auto": None, "zh_override": None, "translation_status": "pending"}
             for key in ZH_FIELDS:
                 setattr(cue, key, value[key])
             cue.provenance.pop("translation", None)
@@ -286,15 +290,18 @@ class VersionStore(TranslationRuns):
                 cue.provenance["review"] = value["review"]
         return cue
 
-    def read_version_cues(self, db, raws):
+    def read_version_cues(self, db, raws, *, compact=False):
         """Attach the selected Chinese result once per transcript, within the caller's transaction."""
         cues = [Cue.model_validate_json(raw) for raw in raws]
         if not cues:
             return []
+        if compact:
+            for cue in cues:
+                cue.provenance = {k: v for k, v in cue.provenance.items() if k == "alignment_diagnostic"}
         active = self._active_translation(db, cues[0].track_id, cues[0].version)
         if not active:
             return cues
-        values = translation_values(db, active)
+        values = translation_values(db, active, diagnostics=not compact)
         for cue in cues:
             value = values.get(
                 cue.id, {"zh_auto": None, "zh_override": None, "translation_status": "pending"}
@@ -302,14 +309,14 @@ class VersionStore(TranslationRuns):
             for key in ZH_FIELDS:
                 setattr(cue, key, value[key])
             cue.provenance.pop("translation", None)
-            if value.get("translation"):
+            if not compact and value.get("translation"):
                 cue.provenance["translation"] = value["translation"]
             cue.provenance["translation_version"] = active
             cue.provenance.pop("training", None)
-            if value.get("training"):
+            if not compact and value.get("training"):
                 cue.provenance["training"] = value["training"]
             cue.review_flags += value.get("translation_flags", [])
-            if value.get("review"):
+            if not compact and value.get("review"):
                 cue.provenance["review"] = value["review"]
         return cues
 
