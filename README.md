@@ -26,10 +26,7 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 
 點左上角的版本號開啟「關於 Ownsei」，可檢查新版並下載對應平台的更新包。下載時可關閉視窗繼續使用，稍後再按「安裝並重新啟動」。更新沿用目前的安裝目錄、工作區與模型庫。私人儲存庫可在啟動前設定具備該庫 Contents 讀取權限的 `GH_TOKEN`。
 
-<details>
-<summary>模型庫、設定檔與解除安裝</summary>
-
-### 模型庫與設定
+## 設定檔與模型存放位置
 
 在「模型管理與環境檢查」可以看到模型庫與下載快取的實際路徑、模型用量和剩餘磁碟空間。首次下載前可按「更改位置」選擇其他磁碟。
 
@@ -39,7 +36,7 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 | 已安裝模型 | `~/.local/share/ownsei/models/` | `%LOCALAPPDATA%\ownsei\models\` |
 | 下載快取與續傳檔 | `~/.cache/ownsei/` | `%LOCALAPPDATA%\ownsei\cache\` |
 
-Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自訂模型庫的下載快取在同磁碟，例如選 `D:\Ownsei\Models` 時使用 `D:\Ownsei\Models.ownsei-download-cache`；若模型庫本身是掛載點，快取放在其下的 `.ownsei-download-cache`。停止下載後可清理快取，已安裝模型仍可使用。
+Linux 設定了絕對路徑的 XDG 環境變數時，設定檔改放在 `$XDG_CONFIG_HOME/ownsei/`，模型預設為 `$XDG_DATA_HOME/ownsei/models/`，下載快取則為 `$XDG_CACHE_HOME/ownsei/`。Windows 可在檔案總管網址列直接貼上表中的路徑。自訂模型庫的下載快取在同磁碟，例如選 `D:\Ownsei\Models` 時使用 `D:\Ownsei\Models.ownsei-download-cache`；若模型庫本身是掛載點，快取放在其下的 `.ownsei-download-cache`。停止下載後可清理快取，已安裝模型仍可使用。
 
 **沿用與搬移。** 上一版設定目錄下的 `models/` 會自動沿用。選「使用這個模型庫」可直接切換至空資料夾或既有 Ownsei 模型庫，原庫留在原處。「搬移已安裝模型」會校驗目的地，再切換位置並清理來源的已搬移檔案。未完成的下載、舊版快取與其他檔案留在原處。模型庫由同一系統使用者的各個新版 Ownsei 共用。
 
@@ -50,6 +47,9 @@ Linux 分別支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME`、`XDG_CACHE_HOME`。自�
 | `storage.json` | 選擇或搬移後記錄模型庫的絕對路徑，由模型管理維護。Linux 放在全局設定目錄，Windows 放在 `%LOCALAPPDATA%\ownsei\`。 |
 
 備份自訂術語與偏好時保留前兩個設定檔。專案、作品術語與校訂字幕存於安裝目錄的 `workspace/`，換版時一併保留。
+
+<details>
+<summary>舊版資料匯入與解除安裝</summary>
 
 更早的版本把模型放在程式目錄的 `models/`。可在「更改位置」直接選用該資料夾；若要複製舊模型與全局術語，先關閉舊版，再從新版安裝目錄執行 `.venv/bin/ownsei import-user-data "/舊版安裝目錄"`（Windows PowerShell 使用 `.\.venv\Scripts\ownsei.exe import-user-data "D:\舊版安裝目錄"`）。這會複製舊模型與全局術語，略過目的地已有的項目。要沿用專案可再複製 `workspace/`；原始音檔請留在原處。瀏覽器偏好會在首次以原瀏覽器及連接埠開啟新版時匯入。
 
