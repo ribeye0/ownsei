@@ -9,7 +9,7 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
 
 支援簡體中文與繁體中文，有專門設定獨立的 prompts，並允許分別修改。
 
-**[下載 Linux／Windows Vulkan 版](https://github.com/ribeye0/ownsei/releases)** （支援簡體中文與繁體中文）
+**[下載 Linux／Windows Vulkan 版](https://github.com/ribeye0/ownsei/releases)**
 
 ## 使用說明
 
