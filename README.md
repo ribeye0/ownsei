@@ -7,7 +7,7 @@
 Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 Index-NativeLong 參照前後文翻譯成中文，在指定譯文風格的同時保持長文用詞的一致性，改善前後人名或稱呼被翻譯成不同詞彙的問題。
 轉錄與翻譯皆在本地執行，並透過 Vulkan 加速，支援 NVIDIA 、AMD 和 Intel 各家的顯卡（VRAM 需 8GB 以上）。
 
-**[下載 Linux／Windows Vulkan 版](https://github.com/ribeye0/ownsei/releases)**
+**[下載 Linux／Windows Vulkan 版](https://github.com/ribeye0/ownsei/releases)** （支援簡體中文與繁體中文）
 
 ## 使用說明
 
