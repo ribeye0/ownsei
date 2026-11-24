@@ -32,41 +32,6 @@ Ownsei 使用 Haas JA 將日語音聲轉錄成帶時間戳的逐字稿，再由 
   <a href="docs/architecture.svg"><img src="docs/architecture.svg" alt="Ownsei 架構：語音區段偵測、日文轉錄、上下文翻譯與字幕匯出" width="900"></a>
 </p>
 
-## 設定檔與模型存放位置
-
-在「模型管理與環境檢查」可以看到模型庫與下載快取的實際路徑、模型用量和剩餘磁碟空間。首次下載前可按「更改位置」選擇其他磁碟。
-
-| 用途 | Linux 預設 | Windows 預設 |
-| --- | --- | --- |
-| 全局設定 | `~/.config/ownsei/` | `%APPDATA%\ownsei\` |
-| 已安裝模型 | `~/.local/share/ownsei/models/` | `%LOCALAPPDATA%\ownsei\models\` |
-| 下載快取與續傳檔 | `~/.cache/ownsei/` | `%LOCALAPPDATA%\ownsei\cache\` |
-
-Linux 設定了絕對路徑的 XDG 環境變數時，設定檔改放在 `$XDG_CONFIG_HOME/ownsei/`，模型預設為 `$XDG_DATA_HOME/ownsei/models/`，下載快取則為 `$XDG_CACHE_HOME/ownsei/`。Windows 可在檔案總管網址列直接貼上表中的路徑。自訂模型庫的下載快取在同磁碟，例如選 `D:\Ownsei\Models` 時使用 `D:\Ownsei\Models.ownsei-download-cache`；若模型庫本身是掛載點，快取放在其下的 `.ownsei-download-cache`。停止下載後可清理快取，已安裝模型仍可使用。
-
-**沿用與搬移。** 上一版設定目錄下的 `models/` 會自動沿用。選「使用這個模型庫」可直接切換至空資料夾或既有 Ownsei 模型庫，原庫留在原處。「搬移已安裝模型」會校驗目的地，再切換位置並清理來源的已搬移檔案。未完成的下載、舊版快取與其他檔案留在原處。模型庫由同一系統使用者的各個新版 Ownsei 共用。
-
-| 設定檔 | 內容與修改入口 |
-| --- | --- |
-| `interface.json` | 介面語言、主題、匯出預設、播放與處理偏好，由對應介面儲存。 |
-| `global-preferences.json` | 全局術語表的日文、譯詞與啟用狀態，由術語編輯器維護。 |
-| `storage.json` | 選擇或搬移後記錄模型庫的絕對路徑，由模型管理維護。Linux 放在全局設定目錄，Windows 放在 `%LOCALAPPDATA%\ownsei\`。 |
-
-備份自訂術語與偏好時保留前兩個設定檔。專案、作品術語與校訂字幕存於安裝目錄的 `workspace/`，換版時一併保留。
-
-<details>
-<summary>舊版資料匯入與解除安裝</summary>
-
-更早的版本把模型放在程式目錄的 `models/`。可在「更改位置」直接選用該資料夾；若要複製舊模型與全局術語，先關閉舊版，再從新版安裝目錄執行 `.venv/bin/ownsei import-user-data "/舊版安裝目錄"`（Windows PowerShell 使用 `.\.venv\Scripts\ownsei.exe import-user-data "D:\舊版安裝目錄"`）。這會複製舊模型與全局術語，略過目的地已有的項目。要沿用專案可再複製 `workspace/`；原始音檔請留在原處。瀏覽器偏好會在首次以原瀏覽器及連接埠開啟新版時匯入。
-
-### 解除安裝
-
-先關閉所有 Ownsei 後端，等下載與處理任務結束。Linux 在發布包內執行 `bash uninstall.sh`，Windows 雙擊 `Uninstall.cmd`。畫面會列出安裝、模型與快取位置，輸入 `DELETE` 後才會移除。想先看逐檔清單，可執行 `bash uninstall.sh --dry-run` 或 `.\Uninstall.cmd --dry-run`。
-
-清理範圍包含這份發布包、專用執行環境，以及同帳號共用的 Ownsei 設定、模型與下載快取。工具會檢查目前模型庫和舊版預設位置；若曾切換到其他模型庫，可加上 `--models-dir "舊模型庫的絕對路徑"`，多個位置可重複指定。安裝目錄的 `workspace/`、外部專案、原始音檔和匯出的字幕會保留。瀏覽器記住的上次選取音軌與專案屬於網站資料，可從瀏覽器清除。
-
-</details>
-
 ## 特色
 
 - **中日雙語字幕**　每句日文與對應的中文譯文共用時間軸，可直接匯出雙語字幕，也可單獨輸出日文或中文。
@@ -110,6 +75,20 @@ Ownsei SFT48 是我用日語音聲台詞與人工中文字幕微調的 Index-Tra
 <p align="center">
   <a href="docs/screenshots/backend-console.webp"><img src="docs/screenshots/backend-console.webp" alt="Ownsei 後端啟動視窗，顯示工作區與本機服務網址" width="900"></a>
 </p>
+
+## 設定檔與模型存放位置
+
+| 用途 | Linux 預設 | Windows 預設 |
+| --- | --- | --- |
+| 設定檔 | `~/.config/ownsei/` | `%APPDATA%\ownsei\` |
+| 模型 | `~/.local/share/ownsei/models/` | `%LOCALAPPDATA%\ownsei\models\` |
+| 下載快取 | `~/.cache/ownsei/` | `%LOCALAPPDATA%\ownsei\cache\` |
+
+Linux 支援 `XDG_CONFIG_HOME`、`XDG_DATA_HOME` 與 `XDG_CACHE_HOME`。模型庫可在「模型管理與環境檢查」選擇或搬移，實際路徑以介面顯示為準。
+
+設定目錄中的 `interface.json` 儲存介面偏好，`global-preferences.json` 儲存全局術語。`storage.json` 記錄自訂模型庫位置，Linux 位於設定目錄，Windows 位於 `%LOCALAPPDATA%\ownsei\`。專案、專案術語與字幕存於安裝目錄的 `workspace/`。
+
+解除安裝時，Linux 執行 `bash uninstall.sh`，Windows 執行 `Uninstall.cmd`，依提示移除程式、共用設定與模型。工作區與音檔會保留。
 
 ## 開發
 
